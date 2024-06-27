@@ -1,4 +1,3 @@
-//
 //  DeviceView.swift
 //  LYWSD02 Clock Sync (macOS)
 //
@@ -24,9 +23,12 @@ struct DeviceView: View {
     var body: some View {
         VStack {
             if let time = peripheral.currentTime {
-                Text(time, style: .time).font(.largeTitle).padding().onTapGesture {
-                    isPopoverPresented = true
-                }
+                Text(time, style: .time)
+                    .font(.system(size: 64)) // Doubled from .largeTitle (32 points)
+                    .padding()
+                    .onTapGesture {
+                        isPopoverPresented = true
+                    }
             }
             
             LazyVGrid(columns: columns) {
@@ -35,8 +37,10 @@ struct DeviceView: View {
                     Image(systemName: "battery.100").frame(width: 30)
                     if let percent = peripheral.batteryPercentage {
                         Text(String(percent) + "%")
+                            .font(.system(size: 24)) // Adjusted font size
                     } else {
                         Text("N/A")
+                            .font(.system(size: 24)) // Adjusted font size
                     }
                 }
                 
@@ -44,8 +48,10 @@ struct DeviceView: View {
                     Image(systemName: "thermometer").frame(width: 30)
                     if let percent = peripheral.currentTemperature {
                         Text(String(percent) + " °C")
+                            .font(.system(size: 24)) // Adjusted font size
                     } else {
                         Text("N/A")
+                            .font(.system(size: 24)) // Adjusted font size
                     }
                 }
                 
@@ -53,32 +59,34 @@ struct DeviceView: View {
                     Image(systemName: "drop").frame(width: 30)
                     if let percent = peripheral.currentHumidity {
                         Text(String(percent) + "%")
+                            .font(.system(size: 24)) // Adjusted font size
                     } else {
                         Text("N/A")
+                            .font(.system(size: 24)) // Adjusted font size
                     }
                 }
             }
             
-            GroupBox(label: Text("Discovered capabilities")) {
+            GroupBox(label: Text("Discovered capabilities").font(.system(size: 28))) { // Adjusted font size
                 VStack(alignment: .leading) {
                     HStack {
                         Image(systemName: peripheral.hasTimeSupport ? "checkmark.circle.fill" : "xmark.circle")
-                        Text("Read & write time")
+                        Text("Read & write time").font(.system(size: 24)) // Adjusted font size
                     }
             
                     HStack {
                         Image(systemName: peripheral.hasBatterySupport ? "checkmark.circle.fill" : "xmark.circle")
-                        Text("Read battery status")
+                        Text("Read battery status").font(.system(size: 24)) // Adjusted font size
                     }
                 
                     HStack {
                         Image(systemName: peripheral.hasTemperatureSupport ? "checkmark.circle.fill" : "xmark.circle")
-                        Text("Read temperature")
+                        Text("Read temperature").font(.system(size: 24)) // Adjusted font size
                     }
                 
                     HStack {
                         Image(systemName: peripheral.hasHumiditySupport ? "checkmark.circle.fill" : "xmark.circle")
-                        Text("Read humidity")
+                        Text("Read humidity").font(.system(size: 24)) // Adjusted font size
                     }
                 }.padding()
             }.padding()
@@ -87,7 +95,7 @@ struct DeviceView: View {
                 peripheral.sync()
             }) {
                 Image(systemName: "arrow.clockwise")
-                Text("Sync")
+                Text("Sync").font(.system(size: 24)) // Adjusted font size
             }
         }.onAppear {
             bleClient.connect(to: peripheral)
@@ -103,17 +111,17 @@ struct DeviceView: View {
                         peripheral.syncTime(target: targetDate)
                     } label: {
                         Image(systemName: "clock.badge.checkmark")
-                        Text("Set this time")
+                        Text("Set this time").font(.system(size: 24)) // Adjusted font size
                     }
                 }.padding()
                 Button {
                     peripheral.syncTime(target: Date())
                 } label: {
                     Image(systemName: "clock.arrow.2.circlepath")
-                    Text("Sync with device")
+                    Text("Sync with device").font(.system(size: 24)) // Adjusted font size
                 }
             }.padding()
-        }.navigationTitle(peripheral.name)
+        }.navigationTitle(peripheral.name).font(.system(size: 24)) // Adjusted font size
     }
 }
 
