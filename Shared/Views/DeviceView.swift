@@ -6,6 +6,7 @@
 
 import CoreBluetooth
 import SwiftUI
+import Combine
 
 struct DeviceView: View {
     @EnvironmentObject var bleClient: BLEClient
@@ -19,6 +20,8 @@ struct DeviceView: View {
         GridItem(.flexible(), alignment: .trailing),
         GridItem(.flexible(), alignment: .leading),
     ]
+    
+    private let timer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
     
     var body: some View {
         VStack {
@@ -121,7 +124,11 @@ struct DeviceView: View {
                     Text("Sync with device").font(.system(size: 24)) // Adjusted font size
                 }
             }.padding()
-        }.navigationTitle(peripheral.name).font(.system(size: 24)) // Adjusted font size
+        }
+        .navigationTitle(peripheral.name) // Removed .font modifier from navigationTitle
+        .onReceive(timer) { _ in
+            peripheral.sync()
+        }
     }
 }
 
