@@ -44,13 +44,13 @@ class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
             return
         }
         
-        if (hasTimeSupport) {
+        if hasTimeSupport {
             if let timeCharacteristic = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.Time.rawValue.cbuuid! }) {
                 peripheral.readValue(for: timeCharacteristic)
             }
         }
         
-        if (hasBatterySupport) {
+        if hasBatterySupport {
             if let batteryCharacteristic = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.Battery.rawValue.cbuuid! }) {
                 peripheral.readValue(for: batteryCharacteristic)
             }
@@ -58,7 +58,7 @@ class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
     }
     
     func syncTime(target: Date) {
-        if (!hasTimeSupport) {
+        if !hasTimeSupport {
             print("Syncing time without time support. Dropping.")
             return
         }
@@ -88,23 +88,44 @@ class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
     }
     
     func peripheralDidUpdateName(_ peripheral: CBPeripheral) {
-        self.name = peripheral.name ?? "Unknown name"
+        DispatchQueue.main.async {
+            self.name = peripheral.name ?? "Unknown name"
+        }
     }
     
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        for service in peripheral.services! {
+        guard error == nil else {
+            print("Error discovering services: \(error!.localizedDescription)")
+            return
+        }
+        
+        guard let services = peripheral.services else {
+            print("No services found")
+            return
+        }
+        
+        for service in services {
             if service.uuid == CBUUID(nsuuid: UUID(uuidString: LYWSD02UUID.Service.Data.rawValue)!) {
                 print("Found service which should contain time data. Discovering characteristics...")
-                
                 peripheral.discoverCharacteristics(nil, for: service)
             }
         }
     }
     
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        guard error == nil else {
+            print("Error discovering characteristics: \(error!.localizedDescription)")
+            return
+        }
+        
+        guard let characteristics = service.characteristics else {
+            print("No characteristics found")
+            return
+        }
+        
         print("Got characteristics!")
         
-        for characteristic in service.characteristics! {
+        for characteristic in characteristics {
             if characteristic.uuid == LYWSD02UUID.Characteristic.Time.rawValue.cbuuid! {
                 print("Found time characteristic in service. Time support is available.")
                 hasTimeSupport = true
@@ -127,36 +148,45 @@ class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
     }
     
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard error == nil else {
+            print("Error updating value for characteristic: \(error!.localizedDescription)")
+            return
+        }
+        
+        guard let data = characteristic.value else {
+            print("No data received for characteristic \(characteristic.uuid)")
+            return
+        }
+        
         switch characteristic.uuid {
         case LYWSD02UUID.Characteristic.Time.rawValue.cbuuid!:
-            guard let data = characteristic.value else {
-                print("Got time characteristic update but no value...")
-                return
+            do {
+                let unpacked = try unpack("<Ib", data)
+                let date = Date(timeIntervalSince1970: TimeInterval(unpacked[0] as! Int))
+                DispatchQueue.main.async {
+                    self.currentTime = date
+                }
+            } catch {
+                print("Error unpacking time data: \(error.localizedDescription)")
             }
-            
-            let unpacked = try! unpack("<Ib", data)
-            let date = Date(timeIntervalSince1970: TimeInterval(unpacked[0] as! Int))
-            currentTime = date
-            break
         case LYWSD02UUID.Characteristic.Battery.rawValue.cbuuid!:
-            guard let data = characteristic.value, let firstByte = data.first else {
+            if let firstByte = data.first {
+                DispatchQueue.main.async {
+                    self.batteryPercentage = Int(firstByte)
+                }
+            } else {
                 print("Got battery characteristic update but no value...")
-                return
             }
-            
-            batteryPercentage = Int(firstByte)
-            break
         case LYWSD02UUID.Characteristic.SensorData.rawValue.cbuuid!:
-            guard let data = characteristic.value else {
-                print("Got sensor data characteristic update but no value...")
-                return
+            do {
+                let unpacked = try unpack("<hB", data)
+                DispatchQueue.main.async {
+                    self.currentTemperature = Double(unpacked[0] as! Int) / 100
+                    self.currentHumidity = unpacked[1] as? Int
+                }
+            } catch {
+                print("Error unpacking sensor data: \(error.localizedDescription)")
             }
-            
-            if let unpacked = try? unpack("<hB", data) {
-                currentTemperature = Double(unpacked[0] as! Int) / 100
-                currentHumidity = unpacked[1] as? Int
-            }
-            break
         default:
             print("Unknown characteristic was updated")
         }
