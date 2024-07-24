@@ -36,7 +36,7 @@ extension DataConvertible {
     
     var data: Data {
         var value = self
-        return Data(buffer: UnsafeBufferPointer(start: &value, count: 1))
+        return withUnsafePointer(to: &value) { Data(bytes: $0, count: MemoryLayout<Self>.size) }
     }
 }
 
