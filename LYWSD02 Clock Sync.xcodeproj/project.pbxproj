@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 63;
+	objectVersion = 90;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -46,17 +46,13 @@
 /* Begin PBXFrameworksBuildPhase section */
 		CD0E1B6C2735A9FE00FE4477 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		CD0E1B722735A9FE00FE4477 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
@@ -125,8 +121,6 @@
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
 			name = "LYWSD02 Clock Sync (iOS)";
 			productName = "LYWSD02 Clock Sync (iOS)";
 			productReference = CD0E1B6F2735A9FE00FE4477 /* LYWSD02 Clock Sync.app */;
@@ -142,8 +136,6 @@
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
 			name = "LYWSD02 Clock Sync (macOS)";
 			productName = "LYWSD02 Clock Sync (macOS)";
 			productReference = CD0E1B752735A9FE00FE4477 /* LYWSD02 Clock Sync.app */;
@@ -157,7 +149,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1310;
-				LastUpgradeCheck = 1540;
+				LastUpgradeCheck = 1640;
 				TargetAttributes = {
 					CD0E1B6E2735A9FE00FE4477 = {
 						CreatedOnToolsVersion = 13.1;
@@ -168,7 +160,6 @@
 				};
 			};
 			buildConfigurationList = CD0E1B662735A9FD00FE4477 /* Build configuration list for PBXProject "LYWSD02 Clock Sync" */;
-			compatibilityVersion = "Xcode 15.3";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -176,6 +167,7 @@
 				Base,
 			);
 			mainGroup = CD0E1B622735A9FD00FE4477;
+			preferredProjectObjectVersion = 90;
 			productRefGroup = CD0E1B702735A9FE00FE4477 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -189,26 +181,21 @@
 /* Begin PBXResourcesBuildPhase section */
 		CD0E1B6D2735A9FE00FE4477 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 				CD0E1B7C2735A9FE00FE4477 /* Assets.xcassets in Resources */,
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		CD0E1B732735A9FE00FE4477 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 				CD0E1B7D2735A9FE00FE4477 /* Assets.xcassets in Resources */,
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		CD0E1B6B2735A9FE00FE4477 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 				CD0E1BE32736D3BC00FE4477 /* Time.swift in Sources */,
 				CD0E1B782735A9FE00FE4477 /* LYWSD02_Clock_SyncApp.swift in Sources */,
@@ -219,11 +206,9 @@
 				CD0E1BF02736D41900FE4477 /* DeviceView.swift in Sources */,
 				CD0E1BE92736D3BC00FE4477 /* BluetoothClient.swift in Sources */,
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 		CD0E1B712735A9FE00FE4477 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
 			files = (
 				CD0E1BE42736D3BC00FE4477 /* Time.swift in Sources */,
 				CD0E1B792735A9FE00FE4477 /* LYWSD02_Clock_SyncApp.swift in Sources */,
@@ -234,15 +219,15 @@
 				CD0E1BF12736D41900FE4477 /* DeviceView.swift in Sources */,
 				CD0E1BEA2736D3BC00FE4477 /* BluetoothClient.swift in Sources */,
 			);
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		CD0E1B7E2735A9FE00FE4477 /* Debug */ = {
+		CD0E1B7E2735A9FE00FE4477 /* Debug configuration for PBXProject "LYWSD02 Clock Sync" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++17";
@@ -300,10 +285,11 @@
 			};
 			name = Debug;
 		};
-		CD0E1B7F2735A9FE00FE4477 /* Release */ = {
+		CD0E1B7F2735A9FE00FE4477 /* Release configuration for PBXProject "LYWSD02 Clock Sync" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++17";
@@ -354,7 +340,7 @@
 			};
 			name = Release;
 		};
-		CD0E1B812735A9FE00FE4477 /* Debug */ = {
+		CD0E1B812735A9FE00FE4477 /* Debug configuration for PBXNativeTarget "LYWSD02 Clock Sync (iOS)" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -392,7 +378,7 @@
 			};
 			name = Debug;
 		};
-		CD0E1B822735A9FE00FE4477 /* Release */ = {
+		CD0E1B822735A9FE00FE4477 /* Release configuration for PBXNativeTarget "LYWSD02 Clock Sync (iOS)" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -431,7 +417,7 @@
 			};
 			name = Release;
 		};
-		CD0E1B842735A9FE00FE4477 /* Debug */ = {
+		CD0E1B842735A9FE00FE4477 /* Debug configuration for PBXNativeTarget "LYWSD02 Clock Sync (macOS)" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -454,7 +440,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "nl.nanosector.LYWSD02-Clock-Sync";
 				PRODUCT_NAME = "LYWSD02 Clock Sync";
@@ -465,7 +451,7 @@
 			};
 			name = Debug;
 		};
-		CD0E1B852735A9FE00FE4477 /* Release */ = {
+		CD0E1B852735A9FE00FE4477 /* Release configuration for PBXNativeTarget "LYWSD02 Clock Sync (macOS)" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -488,7 +474,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "nl.nanosector.LYWSD02-Clock-Sync";
 				PRODUCT_NAME = "LYWSD02 Clock Sync";
@@ -505,28 +491,25 @@
 		CD0E1B662735A9FD00FE4477 /* Build configuration list for PBXProject "LYWSD02 Clock Sync" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				CD0E1B7E2735A9FE00FE4477 /* Debug */,
-				CD0E1B7F2735A9FE00FE4477 /* Release */,
+				CD0E1B7E2735A9FE00FE4477 /* Debug configuration for PBXProject "LYWSD02 Clock Sync" */,
+				CD0E1B7F2735A9FE00FE4477 /* Release configuration for PBXProject "LYWSD02 Clock Sync" */,
 			);
-			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		CD0E1B802735A9FE00FE4477 /* Build configuration list for PBXNativeTarget "LYWSD02 Clock Sync (iOS)" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				CD0E1B812735A9FE00FE4477 /* Debug */,
-				CD0E1B822735A9FE00FE4477 /* Release */,
+				CD0E1B812735A9FE00FE4477 /* Debug configuration for PBXNativeTarget "LYWSD02 Clock Sync (iOS)" */,
+				CD0E1B822735A9FE00FE4477 /* Release configuration for PBXNativeTarget "LYWSD02 Clock Sync (iOS)" */,
 			);
-			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 		CD0E1B832735A9FE00FE4477 /* Build configuration list for PBXNativeTarget "LYWSD02 Clock Sync (macOS)" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				CD0E1B842735A9FE00FE4477 /* Debug */,
-				CD0E1B852735A9FE00FE4477 /* Release */,
+				CD0E1B842735A9FE00FE4477 /* Debug configuration for PBXNativeTarget "LYWSD02 Clock Sync (macOS)" */,
+				CD0E1B852735A9FE00FE4477 /* Release configuration for PBXNativeTarget "LYWSD02 Clock Sync (macOS)" */,
 			);
-			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
