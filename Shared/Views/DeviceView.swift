@@ -15,6 +15,7 @@ struct DeviceView: View {
     
     @State var isPopoverPresented = false
     @State var targetDate = Date()
+    @State private var localTime = Date() // Add local time state
     
     var columns: [GridItem] = [
         GridItem(.flexible(), alignment: .trailing),
@@ -32,6 +33,15 @@ struct DeviceView: View {
                     .onTapGesture {
                         isPopoverPresented = true
                     }
+                
+                // Local laptop time display
+                HStack(spacing: 4) {
+                    Image(systemName: "desktopcomputer")
+                    Text("Local time:")
+                    Text(localTime, style: .time)
+                }
+                .font(.system(size: 18))
+                .padding(.bottom, 8)
             }
             
             LazyVGrid(columns: columns) {
@@ -103,14 +113,7 @@ struct DeviceView: View {
                 .padding(.top, 4)
             }
         }
-        .toolbar {
-            Button(action: {
-                peripheral.sync()
-            }) {
-                Image(systemName: "arrow.clockwise")
-                Text("Sync").font(.system(size: 24)) // Adjusted font size
-            }
-        }.onAppear {
+        .onAppear {
             bleClient.connect(to: peripheral)
         }.onDisappear {
             bleClient.disconnect(peripheral)
@@ -138,6 +141,7 @@ struct DeviceView: View {
         .navigationTitle(peripheral.name) // Removed .font modifier from navigationTitle
         .onReceive(timer) { _ in
             peripheral.sync()
+            localTime = Date() // update local time every tick
         }
     }
 }
