@@ -119,20 +119,8 @@ private extension DeviceView {
 private extension DeviceView {
     @ViewBuilder
     func readingsAndCapabilities(width: CGFloat) -> some View {
-        let multiColumn = width > 1000
-        Group {
-            if multiColumn {
-                HStack(alignment: .top, spacing: 28) {
-                    readingsCard.flexPriority()
-                    capabilitiesCard.frame(maxWidth: 320)
-                }
-            } else {
-                VStack(spacing: 28) {
-                    readingsCard
-                    capabilitiesCard
-                }
-            }
-        }
+        // Now a single card with metrics + live footer + horizontal capabilities row
+        readingsCard
     }
     
     var readingsCard: some View {
@@ -144,25 +132,83 @@ private extension DeviceView {
             }
             .frame(maxWidth: .infinity)
             liveSensorFooter
+            capabilitiesRow
         }
         .padding(24)
         .glassBackground()
     }
     
-    var capabilitiesCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Capabilities")
-                .font(.title3.weight(.semibold))
-                .padding(.bottom, 4)
-            capabilityChip("Time", ok: peripheral.hasTimeSupport, symbol: "clock")
-            capabilityChip("Battery", ok: peripheral.hasBatterySupport, symbol: "battery.100")
-            capabilityChip("Temperature", ok: peripheral.hasTemperatureSupport, symbol: "thermometer.medium")
-            capabilityChip("Humidity", ok: peripheral.hasHumiditySupport, symbol: "drop")
-            capabilityChip("History", ok: peripheral.hasHistorySupport, symbol: "clock.arrow.circlepath")
+    // Removed separate capabilitiesCard; replaced by capabilitiesRow
+    var capabilitiesRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                capabilityChipCompact("Time", ok: peripheral.hasTimeSupport, symbol: "clock")
+                capabilityChipCompact("Battery", ok: peripheral.hasBatterySupport, symbol: "battery.100")
+                capabilityChipCompact("Temp", ok: peripheral.hasTemperatureSupport, symbol: "thermometer.medium")
+                capabilityChipCompact("Humidity", ok: peripheral.hasHumiditySupport, symbol: "drop")
+                capabilityChipCompact("History", ok: peripheral.hasHistorySupport, symbol: "clock.arrow.circlepath")
+            }
+            .padding(.vertical, 4)
         }
-        .padding(20)
-        .glassBackground()
-        .accessibilityElement(children: .contain)
+        .padding(.top, 4)
+    }
+    
+    func capabilityChipCompact(_ title: String, ok: Bool, symbol: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(ok ? Color.accentColor : .secondary)
+            Text(title)
+                .font(.caption.weight(.medium))
+            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle")
+                .font(.system(size: 12))
+                .foregroundStyle(ok ? .green : .secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().stroke(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.15)))
+    }
+    
+    // Restored metricTile helper
+    func metricTile(title: String, value: String, systemImage: String, tint: Color) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 26, weight: .medium))
+                .foregroundStyle(tint.gradient)
+                .frame(height: 30)
+            Text(value)
+                .font(.system(size: 22, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .minimumScaleFactor(0.7)
+            Text(title.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .padding(.horizontal, 10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(colorScheme == .dark ? 0.07 : 0.15)))
+    }
+    
+    // Existing capabilityChip retained for potential future use
+    func capabilityChip(_ title: String, ok: Bool, symbol: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: ok ? symbol : "questionmark")
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(ok ? Color.accentColor : .secondary)
+            Text(title)
+                .font(.subheadline.weight(.medium))
+            Spacer()
+            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle")
+                .foregroundStyle(ok ? .green : .secondary)
+                .font(.caption)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.15)))
     }
     
     var liveSensorFooter: some View {
@@ -186,45 +232,6 @@ private extension DeviceView {
                 .disabled(!peripheral.hasHistorySupport || peripheral.isFetchingHistory)
         }
         .padding(.top, 8)
-    }
-    
-    func capabilityChip(_ title: String, ok: Bool, symbol: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: ok ? symbol : "questionmark")
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(ok ? Color.accentColor : .secondary)
-            Text(title)
-                .font(.subheadline.weight(.medium))
-            Spacer()
-            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle")
-                .foregroundStyle(ok ? .green : .secondary)
-                .font(.caption)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.15)))
-    }
-    
-    func metricTile(title: String, value: String, systemImage: String, tint: Color) -> some View {
-        VStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .font(.system(size: 26, weight: .medium))
-                .foregroundStyle(tint.gradient)
-                .frame(height: 30)
-            Text(value)
-                .font(.system(size: 22, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-                .minimumScaleFactor(0.7)
-            Text(title.uppercased())
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 14)
-        .padding(.horizontal, 10)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(colorScheme == .dark ? 0.07 : 0.15)))
     }
 }
 
