@@ -19,6 +19,7 @@ struct DeviceView: View {
     @State var isPopoverPresented = false
     @State var targetDate = Date()
     @State private var localTime = Date() // Add local time state
+    @State private var historyRange: HistoryRange = .day // NEW: time scale selector
     
     var columns: [GridItem] = [
         GridItem(.flexible(), alignment: .trailing),
@@ -115,58 +116,63 @@ struct DeviceView: View {
                 .foregroundColor(.secondary)
                 .padding(.top, 4)
             }
-            // History Section
+            // History Section (reworked: two separate graphs + range picker)
             if peripheral.hasHistorySupport {
                 GroupBox(label: Text("History").font(.system(size: 24))) {
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 16) {
                         if peripheral.isFetchingHistory {
-                            HStack {
-                                ProgressView()
-                                Text("Fetching history...")
-                            }
+                            HStack { ProgressView(); Text("Fetching history...") }
                         } else if peripheral.history.isEmpty {
-                            Button {
-                                peripheral.fetchHistory()
-                            } label: {
-                                Label("Load History", systemImage: "arrow.down.circle")
-                            }
+                            Button { peripheral.fetchHistory() } label: { Label("Load History", systemImage: "arrow.down.circle") }
                         } else {
-                            #if canImport(Charts)
-                            Chart(peripheral.history.sorted { $0.timestamp < $1.timestamp }) { rec in
-                                LineMark(
-                                    x: .value("Time", rec.timestamp),
-                                    y: .value("Min °C", rec.minTemperature)
-                                ).foregroundStyle(.blue)
-                                LineMark(
-                                    x: .value("Time", rec.timestamp),
-                                    y: .value("Max °C", rec.maxTemperature)
-                                ).foregroundStyle(.red)
-                                // Humidity as area / bar alternative
-                                AreaMark(
-                                    x: .value("Time", rec.timestamp),
-                                    y: .value("Humidity %", rec.maxHumidity)
-                                ).foregroundStyle(.green.opacity(0.15))
-                            }
-                            .frame(height: 220)
-                            .chartXAxis {
-                                AxisMarks(values: .automatic(desiredCount: 5))
-                            }
-                            .chartYAxis {
-                                AxisMarks()
-                            }
-                            #else
-                            // Fallback simple list if Charts not available
-                            VStack(alignment: .leading) {
-                                ForEach(peripheral.history.sorted { $0.timestamp < $1.timestamp }) { rec in
-                                    HStack {
-                                        Text(rec.timestamp, style: .time).monospacedDigit()
-                                        Spacer()
-                                        Text(String(format: "%.1f–%.1f °C", rec.minTemperature, rec.maxTemperature))
-                                        Text("H: \(rec.minHumidity)–\(rec.maxHumidity)%")
-                                    }.font(.caption)
+                            // Range picker
+                            Picker("Range", selection: $historyRange) {
+                                ForEach(HistoryRange.allCases, id: \.self) { r in
+                                    Text(r.label).tag(r)
                                 }
-                            }.frame(maxHeight: 220)
-                            #endif
+                            }.pickerStyle(.segmented)
+                            let records = filteredHistory(peripheral.history)
+                            if records.isEmpty {
+                                Text("No data in selected range").font(.footnote).foregroundColor(.secondary)
+                            } else {
+                                #if canImport(Charts)
+                                // Temperature Chart
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Temperature (°C)").font(.headline)
+                                    Chart(records.sorted { $0.timestamp < $1.timestamp }) { rec in
+                                        LineMark(x: .value("Time", rec.timestamp), y: .value("Min", rec.minTemperature)).foregroundStyle(.blue)
+                                        LineMark(x: .value("Time", rec.timestamp), y: .value("Max", rec.maxTemperature)).foregroundStyle(.red)
+                                    }
+                                    .frame(height: 160)
+                                    .chartXAxis { AxisMarks(values: .automatic(desiredCount: 5)) }
+                                    .chartYAxis { AxisMarks() }
+                                }
+                                // Humidity Chart
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Humidity (%)").font(.headline)
+                                    Chart(records.sorted { $0.timestamp < $1.timestamp }) { rec in
+                                        LineMark(x: .value("Time", rec.timestamp), y: .value("Min", rec.minHumidity)).foregroundStyle(.teal)
+                                        LineMark(x: .value("Time", rec.timestamp), y: .value("Max", rec.maxHumidity)).foregroundStyle(.green)
+                                    }
+                                    .frame(height: 160)
+                                    .chartXAxis { AxisMarks(values: .automatic(desiredCount: 5)) }
+                                    .chartYAxis { AxisMarks() }
+                                }
+                                #else
+                                // Fallback textual lists
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Temperature (°C) min–max").font(.headline)
+                                    ForEach(records.sorted { $0.timestamp < $1.timestamp }) { rec in
+                                        HStack { Text(rec.timestamp, style: .time).monospacedDigit(); Spacer(); Text(String(format: "%.1f–%.1f", rec.minTemperature, rec.maxTemperature)) }.font(.caption)
+                                    }
+                                    Divider().padding(.vertical, 4)
+                                    Text("Humidity (%) min–max").font(.headline)
+                                    ForEach(records.sorted { $0.timestamp < $1.timestamp }) { rec in
+                                        HStack { Text(rec.timestamp, style: .time).monospacedDigit(); Spacer(); Text("\(rec.minHumidity)–\(rec.maxHumidity)") }.font(.caption)
+                                    }
+                                }
+                                #endif
+                            }
                             HStack(spacing: 16) {
                                 if let total = peripheral.totalHistoryRecords, let current = peripheral.currentHistoryRecords {
                                     Text("Records: \(peripheral.history.count)/\(current) (total: \(total))")
@@ -174,8 +180,7 @@ struct DeviceView: View {
                                         .foregroundColor(.secondary)
                                 }
                                 Spacer()
-                                Button { peripheral.fetchHistory() } label: { Label("Refresh", systemImage: "arrow.clockwise") }
-                                    .controlSize(.small)
+                                Button { peripheral.fetchHistory() } label: { Label("Refresh", systemImage: "arrow.clockwise") }.controlSize(.small)
                             }
                         }
                     }.padding(.top, 4)
@@ -218,6 +223,28 @@ struct DeviceView: View {
                 peripheral.fetchHistory()
             }
         }
+    }
+}
+
+// MARK: - History Range Support
+private enum HistoryRange: CaseIterable {
+    case day, threeDays, week, all
+    var label: String {
+        switch self { case .day: return "24h"; case .threeDays: return "3d"; case .week: return "7d"; case .all: return "All" }
+    }
+}
+
+private extension DeviceView {
+    func filteredHistory(_ history: [BLEDeviceModel.HistoryRecord]) -> [BLEDeviceModel.HistoryRecord] {
+        guard let maxDate = history.map(\.timestamp).max() else { return [] }
+        let cutoff: Date
+        switch historyRange {
+        case .day: cutoff = maxDate.addingTimeInterval(-24*3600)
+        case .threeDays: cutoff = maxDate.addingTimeInterval(-3*24*3600)
+        case .week: cutoff = maxDate.addingTimeInterval(-7*24*3600)
+        case .all: return history
+        }
+        return history.filter { $0.timestamp >= cutoff }
     }
 }
 
