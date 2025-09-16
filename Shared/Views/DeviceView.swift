@@ -93,7 +93,17 @@ struct DeviceView: View {
                     }
                 }.padding()
             }.padding()
-        }.toolbar {
+            if let autoSyncAt = peripheral.lastAutoTimeSyncAt { // NEW status line
+                HStack(spacing: 4) {
+                    Image(systemName: "clock.badge.checkmark")
+                    Text("Time auto-synced at ") + Text(autoSyncAt, style: .time)
+                }
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .padding(.top, 4)
+            }
+        }
+        .toolbar {
             Button(action: {
                 peripheral.sync()
             }) {

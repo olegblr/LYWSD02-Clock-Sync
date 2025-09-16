@@ -22,6 +22,10 @@ class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
     @Published private(set) var name: String
     
     private var _peripheral: CBPeripheral
+    // One-time auto time sync guard per connection
+    private var autoTimeSynced = false
+    // Record when an automatic time sync happened
+    @Published private(set) var lastAutoTimeSyncAt: Date? = nil
     
     // MARK: Wrappers for CBPeripheral fields.
     var identifier: String { peripheral.identifier.uuidString }
@@ -129,6 +133,14 @@ class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
             if characteristic.uuid == LYWSD02UUID.Characteristic.Time.rawValue.cbuuid! {
                 print("Found time characteristic in service. Time support is available.")
                 hasTimeSupport = true
+                if !autoTimeSynced { // perform one automatic sync with current system time
+                    autoTimeSynced = true
+                    let scheduledAt = Date()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { // slight delay to ensure peripheral ready
+                        self.syncTime(target: scheduledAt)
+                        DispatchQueue.main.async { self.lastAutoTimeSyncAt = Date() }
+                    }
+                }
             }
             
             if characteristic.uuid == LYWSD02UUID.Characteristic.Battery.rawValue.cbuuid! {
