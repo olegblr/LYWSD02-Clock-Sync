@@ -20,6 +20,11 @@ struct LYWSD02UUID {
         case Time = "EBE0CCB7-7A0A-4B0C-8A1A-6FF2997DA3A6" // 5 or 4 bytes, READ WRITE
         case Battery = "EBE0CCC4-7A0A-4B0C-8A1A-6FF2997DA3A6" // 1 byte, READ
         case SensorData = "EBE0CCC1-7A0A-4B0C-8A1A-6FF2997DA3A6" // 3 bytes, READ NOTIFY
+        // Added history related characteristics
+        case Units = "EBE0CCBE-7A0A-4B0C-8A1A-6FF2997DA3A6" // READ WRITE
+        case History = "EBE0CCBC-7A0A-4B0C-8A1A-6FF2997DA3A6" // READ NOTIFY (stream of history records)
+        case NumRecords = "EBE0CCB9-7A0A-4B0C-8A1A-6FF2997DA3A6" // 8 bytes total & current counts, READ
+        case RecordIndex = "EBE0CCBA-7A0A-4B0C-8A1A-6FF2997DA3A6" // 4 bytes, READ WRITE
     }
 }
 

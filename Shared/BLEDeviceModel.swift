@@ -26,6 +26,21 @@ class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
     private var autoTimeSynced = false
     // Record when an automatic time sync happened
     @Published private(set) var lastAutoTimeSyncAt: Date? = nil
+    // History support
+    struct HistoryRecord: Identifiable {
+        let id: Int // index from device
+        let timestamp: Date
+        let minTemperature: Double
+        let minHumidity: Int
+        let maxTemperature: Double
+        let maxHumidity: Int
+    }
+    @Published private(set) var history: [HistoryRecord] = []
+    @Published private(set) var totalHistoryRecords: Int? = nil
+    @Published private(set) var currentHistoryRecords: Int? = nil
+    @Published private(set) var isFetchingHistory = false
+    @Published private(set) var hasHistorySupport = false
+    private var historyNotificationActive = false
     
     // MARK: Wrappers for CBPeripheral fields.
     var identifier: String { peripheral.identifier.uuidString }
@@ -116,6 +131,27 @@ class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
         }
     }
     
+    func fetchHistory() {
+        guard hasHistorySupport else { return }
+        guard let service = peripheral.services?.first(where: { $0.uuid == LYWSD02UUID.Service.Data.rawValue.cbuuid! }) else { return }
+        guard let historyChar = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.History.rawValue.cbuuid! }),
+              let recordIndexChar = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.RecordIndex.rawValue.cbuuid! }),
+              let numRecordsChar = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.NumRecords.rawValue.cbuuid! }) else { return }
+        // Read counts first
+        peripheral.readValue(for: numRecordsChar)
+        // Enable notify for history stream if not yet
+        if !historyNotificationActive {
+            peripheral.setNotifyValue(true, for: historyChar)
+            historyNotificationActive = true
+        }
+        // Clear current history and request streaming from index 0
+        history.removeAll()
+        isFetchingHistory = true
+        var start: UInt32 = 0
+        let data = Data(bytes: &start, count: MemoryLayout<UInt32>.size)
+        peripheral.writeValue(data, for: recordIndexChar, type: .withResponse)
+    }
+    
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard error == nil else {
             print("Error discovering characteristics: \(error!.localizedDescription)")
@@ -154,6 +190,15 @@ class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
                 hasTemperatureSupport = true
                 hasHumiditySupport = true
             }
+            if characteristic.uuid == LYWSD02UUID.Characteristic.History.rawValue.cbuuid! {
+                hasHistorySupport = true
+            }
+            if characteristic.uuid == LYWSD02UUID.Characteristic.NumRecords.rawValue.cbuuid! {
+                hasHistorySupport = true
+            }
+            if characteristic.uuid == LYWSD02UUID.Characteristic.RecordIndex.rawValue.cbuuid! {
+                hasHistorySupport = true
+            }
         }
         
         sync()
@@ -175,20 +220,10 @@ class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
             do {
                 let unpacked = try unpack("<Ib", data)
                 let date = Date(timeIntervalSince1970: TimeInterval(unpacked[0] as! Int))
-                DispatchQueue.main.async {
-                    self.currentTime = date
-                }
-            } catch {
-                print("Error unpacking time data: \(error.localizedDescription)")
-            }
+                DispatchQueue.main.async { self.currentTime = date }
+            } catch { print("Error unpacking time data: \(error.localizedDescription)") }
         case LYWSD02UUID.Characteristic.Battery.rawValue.cbuuid!:
-            if let firstByte = data.first {
-                DispatchQueue.main.async {
-                    self.batteryPercentage = Int(firstByte)
-                }
-            } else {
-                print("Got battery characteristic update but no value...")
-            }
+            if let firstByte = data.first { DispatchQueue.main.async { self.batteryPercentage = Int(firstByte) } }
         case LYWSD02UUID.Characteristic.SensorData.rawValue.cbuuid!:
             do {
                 let unpacked = try unpack("<hB", data)
@@ -196,8 +231,36 @@ class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
                     self.currentTemperature = Double(unpacked[0] as! Int) / 100
                     self.currentHumidity = unpacked[1] as? Int
                 }
-            } catch {
-                print("Error unpacking sensor data: \(error.localizedDescription)")
+            } catch { print("Error unpacking sensor data: \(error.localizedDescription)") }
+        case LYWSD02UUID.Characteristic.NumRecords.rawValue.cbuuid!:
+            if data.count == 8 {
+                let total = data.withUnsafeBytes { $0.load(fromByteOffset: 0, as: UInt32.self) }
+                let current = data.withUnsafeBytes { $0.load(fromByteOffset: 4, as: UInt32.self) }
+                DispatchQueue.main.async {
+                    self.totalHistoryRecords = Int(total)
+                    self.currentHistoryRecords = Int(current)
+                }
+            }
+        case LYWSD02UUID.Characteristic.History.rawValue.cbuuid!:
+            // Expect <IIhBhB (idx, ts, max_temp, max_hum, min_temp, min_hum)
+            if data.count == 4+4+2+1+2+1 {
+                do {
+                    let unpacked = try unpack("<IIhBhB", data)
+                    let idx = unpacked[0] as! Int
+                    let ts = TimeInterval(unpacked[1] as! Int)
+                    let maxTempRaw = unpacked[2] as! Int
+                    let maxHum = unpacked[3] as! Int
+                    let minTempRaw = unpacked[4] as! Int
+                    let minHum = unpacked[5] as! Int
+                    let rec = HistoryRecord(id: idx, timestamp: Date(timeIntervalSince1970: ts), minTemperature: Double(minTempRaw)/100.0, minHumidity: minHum, maxTemperature: Double(maxTempRaw)/100.0, maxHumidity: maxHum)
+                    DispatchQueue.main.async {
+                        self.history.append(rec)
+                        // If we know currentHistoryRecords and reached it, mark done
+                        if let expected = self.currentHistoryRecords, self.history.count >= expected {
+                            self.isFetchingHistory = false
+                        }
+                    }
+                } catch { print("Error unpacking history data: \(error.localizedDescription)") }
             }
         default:
             print("Unknown characteristic was updated")

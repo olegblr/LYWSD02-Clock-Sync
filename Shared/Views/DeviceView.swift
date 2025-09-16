@@ -7,6 +7,9 @@
 import CoreBluetooth
 import SwiftUI
 import Combine
+#if canImport(Charts)
+import Charts
+#endif
 
 struct DeviceView: View {
     @EnvironmentObject var bleClient: BLEClient
@@ -112,6 +115,72 @@ struct DeviceView: View {
                 .foregroundColor(.secondary)
                 .padding(.top, 4)
             }
+            // History Section
+            if peripheral.hasHistorySupport {
+                GroupBox(label: Text("History").font(.system(size: 24))) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if peripheral.isFetchingHistory {
+                            HStack {
+                                ProgressView()
+                                Text("Fetching history...")
+                            }
+                        } else if peripheral.history.isEmpty {
+                            Button {
+                                peripheral.fetchHistory()
+                            } label: {
+                                Label("Load History", systemImage: "arrow.down.circle")
+                            }
+                        } else {
+                            #if canImport(Charts)
+                            Chart(peripheral.history.sorted { $0.timestamp < $1.timestamp }) { rec in
+                                LineMark(
+                                    x: .value("Time", rec.timestamp),
+                                    y: .value("Min °C", rec.minTemperature)
+                                ).foregroundStyle(.blue)
+                                LineMark(
+                                    x: .value("Time", rec.timestamp),
+                                    y: .value("Max °C", rec.maxTemperature)
+                                ).foregroundStyle(.red)
+                                // Humidity as area / bar alternative
+                                AreaMark(
+                                    x: .value("Time", rec.timestamp),
+                                    y: .value("Humidity %", rec.maxHumidity)
+                                ).foregroundStyle(.green.opacity(0.15))
+                            }
+                            .frame(height: 220)
+                            .chartXAxis {
+                                AxisMarks(values: .automatic(desiredCount: 5))
+                            }
+                            .chartYAxis {
+                                AxisMarks()
+                            }
+                            #else
+                            // Fallback simple list if Charts not available
+                            VStack(alignment: .leading) {
+                                ForEach(peripheral.history.sorted { $0.timestamp < $1.timestamp }) { rec in
+                                    HStack {
+                                        Text(rec.timestamp, style: .time).monospacedDigit()
+                                        Spacer()
+                                        Text(String(format: "%.1f–%.1f °C", rec.minTemperature, rec.maxTemperature))
+                                        Text("H: \(rec.minHumidity)–\(rec.maxHumidity)%")
+                                    }.font(.caption)
+                                }
+                            }.frame(maxHeight: 220)
+                            #endif
+                            HStack(spacing: 16) {
+                                if let total = peripheral.totalHistoryRecords, let current = peripheral.currentHistoryRecords {
+                                    Text("Records: \(peripheral.history.count)/\(current) (total: \(total))")
+                                        .font(.footnote)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Button { peripheral.fetchHistory() } label: { Label("Refresh", systemImage: "arrow.clockwise") }
+                                    .controlSize(.small)
+                            }
+                        }
+                    }.padding(.top, 4)
+                }.padding(.top)
+            }
         }
         .onAppear {
             bleClient.connect(to: peripheral)
@@ -142,6 +211,12 @@ struct DeviceView: View {
         .onReceive(timer) { _ in
             peripheral.sync()
             localTime = Date() // update local time every tick
+        }
+        .onAppear {
+            // Auto-load history on first appearance if supported and empty
+            if peripheral.hasHistorySupport && peripheral.history.isEmpty && !peripheral.isFetchingHistory {
+                peripheral.fetchHistory()
+            }
         }
     }
 }
