@@ -10,39 +10,53 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var bleClient = BLEClient()
+    @State private var selectedPeripheral: BLEDeviceModel? = nil
 
     var body: some View {
-        NavigationView {
-            List {
-                ForEach(bleClient.discoveredPeripherals, id: \.identifier) { peripheral in
-                    NavigationLink(destination: DeviceView(peripheral: peripheral)) {
-                        VStack(alignment: .leading) {
-                            Text(peripheral.name)
-                            Text(peripheral.identifier).font(.footnote)
-                        }
-                    }
-                }
-            }
-            .toolbar {
-                Button(action: {
+        Group {
+            if let device = selectedPeripheral {
+                // Directly show the device view once discovered
+                DeviceView(peripheral: device)
+            } else {
+                VStack(spacing: 16) {
+                    ProgressView("Scanning for device…")
                     if bleClient.scanning {
-                        bleClient.stopScan()
+                        Text("Searching…").foregroundColor(.secondary).font(.footnote)
                     } else {
-                        bleClient.triggerScan()
+                        Button { bleClient.triggerScan() } label: { Label("Retry Scan", systemImage: "arrow.clockwise") }
                     }
-                }) {
-                    Image(systemName: bleClient.scanning ? "stop.circle.fill" : "arrow.clockwise")
                 }
-            }.navigationTitle("Discovered Devices")
-        }.environmentObject(bleClient)
-            .onDisappear {
-                bleClient.stopScan()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+        .environmentObject(bleClient)
+        .onAppear {
+            // Start scan if nothing yet
+            if bleClient.discoveredPeripherals.isEmpty { bleClient.triggerScan() }
+            // If a device already discovered (e.g. returning from background), select it
+            if selectedPeripheral == nil, let first = bleClient.discoveredPeripherals.first { selectedPeripheral = first }
+        }
+        .onDisappear { bleClient.stopScan() }
+        .adaptiveOnChange(of: bleClient.discoveredPeripherals) { list in
+            if selectedPeripheral == nil, let first = list.first {
+                selectedPeripheral = first
+            }
+        }
     }
 }
 
 struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        ContentView()
+    static var previews: some View { ContentView() }
+}
+
+// Adaptive onChange extension handling API differences (macOS 14+/iOS 17+ two-parameter vs older single-parameter)
+private extension View {
+    @ViewBuilder
+    func adaptiveOnChange<V: Equatable>(of value: V, perform action: @escaping (V) -> Void) -> some View {
+        if #available(macOS 14.0, iOS 17.0, *) {
+            self.onChange(of: value) { _, newValue in action(newValue) }
+        } else {
+            self.onChange(of: value) { newValue in action(newValue) }
+        }
     }
 }

@@ -8,10 +8,11 @@
 import Foundation
 
 struct Time {
-    var timestamp = Int(NSDate().timeIntervalSince1970)
+    var timestamp = Int(Date().timeIntervalSince1970)
     var timezoneOffset = 1
     
     func data() -> Data {
-        pack("<Ib", [timestamp, timezoneOffset])
+        // Ensure the `pack` function is defined elsewhere in your project
+        return pack("<Ib", [timestamp, timezoneOffset])
     }
 }
