@@ -7,8 +7,10 @@
 
 import Foundation
 import CoreBluetooth
+import os.log
 
-class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
+@MainActor
+final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
     @Published private(set) var hasTimeSupport = false
     @Published private(set) var hasBatterySupport = false
     @Published private(set) var hasTemperatureSupport = false
@@ -42,10 +44,10 @@ class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
     @Published private(set) var hasHistorySupport = false
     private var historyNotificationActive = false
     
+    private let logger = Logger(subsystem: "com.lywsd02.clocksync", category: "Device")
+    
     // MARK: Wrappers for CBPeripheral fields.
     var identifier: String { peripheral.identifier.uuidString }
-    
-    // get-only wrapper
     var peripheral: CBPeripheral { self._peripheral }
     
     required init(_ peripheral: CBPeripheral) {
@@ -56,76 +58,87 @@ class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
     }
     
     func sync() {
-        batteryPercentage = nil
-        currentTime = nil
-        
-        guard let service = peripheral.services?.first(where: { $0.uuid == LYWSD02UUID.Service.Data.rawValue.cbuuid! }) else {
+        // Keep last known values instead of clearing them
+        guard let service = peripheral.services?.first(where: { $0.uuid == LYWSD02UUID.Service.Data.cbuuid }) else {
+            logger.warning("Data service not found for sync")
             return
         }
         
         if hasTimeSupport {
-            if let timeCharacteristic = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.Time.rawValue.cbuuid! }) {
+            if let timeCharacteristic = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.Time.cbuuid }) {
                 peripheral.readValue(for: timeCharacteristic)
             }
         }
         
         if hasBatterySupport {
-            if let batteryCharacteristic = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.Battery.rawValue.cbuuid! }) {
+            if let batteryCharacteristic = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.Battery.cbuuid }) {
                 peripheral.readValue(for: batteryCharacteristic)
             }
         }
     }
     
     func syncTime(target: Date) {
-        if !hasTimeSupport {
-            print("Syncing time without time support. Dropping.")
+        guard hasTimeSupport else {
+            logger.warning("Attempted to sync time without time support")
             return
         }
         
-        guard let service = peripheral.services?.first(where: { $0.uuid == LYWSD02UUID.Service.Data.rawValue.cbuuid! }) else {
+        guard let service = peripheral.services?.first(where: { $0.uuid == LYWSD02UUID.Service.Data.cbuuid }) else {
+            logger.error("Data service not found")
             return
         }
         
-        guard let timeCharacteristic = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.Time.rawValue.cbuuid! }) else {
+        guard let timeCharacteristic = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.Time.cbuuid }) else {
+            logger.error("Time characteristic not found")
             return
         }
         
         let timezone = TimeZone.current
-        let time = Time(timestamp: Int(target.timeIntervalSince1970), timezoneOffset: timezone.secondsFromGMT() / 3600) // todo make timezone configurable
+        let time = Time(timestamp: Int(target.timeIntervalSince1970), timezoneOffset: timezone.secondsFromGMT() / 3600)
         
         peripheral.writeValue(time.data(), for: timeCharacteristic, type: .withResponse)
+        logger.info("Writing time to device")
     }
     
-    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard error == nil else {
-            print("Something went wrong while writing a value!")
-            print(error.debugDescription)
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let error = error {
+            Task { @MainActor in
+                logger.error("Failed to write value: \(error.localizedDescription)")
+            }
             return
         }
         
-        sync()
+        Task { @MainActor in
+            self.sync()
+        }
     }
     
-    func peripheralDidUpdateName(_ peripheral: CBPeripheral) {
-        DispatchQueue.main.async {
+    nonisolated func peripheralDidUpdateName(_ peripheral: CBPeripheral) {
+        Task { @MainActor in
             self.name = peripheral.name ?? "Unknown name"
         }
     }
     
-    func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard error == nil else {
-            print("Error discovering services: \(error!.localizedDescription)")
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        if let error = error {
+            Task { @MainActor in
+                logger.error("Error discovering services: \(error.localizedDescription)")
+            }
             return
         }
         
         guard let services = peripheral.services else {
-            print("No services found")
+            Task { @MainActor in
+                logger.warning("No services found")
+            }
             return
         }
         
         for service in services {
-            if service.uuid == CBUUID(nsuuid: UUID(uuidString: LYWSD02UUID.Service.Data.rawValue)!) {
-                print("Found service which should contain time data. Discovering characteristics...")
+            if service.uuid == LYWSD02UUID.Service.Data.cbuuid {
+                Task { @MainActor in
+                    logger.info("Found data service, discovering characteristics")
+                }
                 peripheral.discoverCharacteristics(nil, for: service)
             }
         }
@@ -133,137 +146,197 @@ class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
     
     func fetchHistory() {
         guard hasHistorySupport else { return }
-        guard let service = peripheral.services?.first(where: { $0.uuid == LYWSD02UUID.Service.Data.rawValue.cbuuid! }) else { return }
-        guard let historyChar = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.History.rawValue.cbuuid! }),
-              let recordIndexChar = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.RecordIndex.rawValue.cbuuid! }),
-              let numRecordsChar = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.NumRecords.rawValue.cbuuid! }) else { return }
-        // Read counts first
+        guard let service = peripheral.services?.first(where: { $0.uuid == LYWSD02UUID.Service.Data.cbuuid }) else { return }
+        guard let historyChar = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.History.cbuuid }),
+              let recordIndexChar = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.RecordIndex.cbuuid }),
+              let numRecordsChar = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.NumRecords.cbuuid }) else { return }
+        
         peripheral.readValue(for: numRecordsChar)
-        // Enable notify for history stream if not yet
+        
         if !historyNotificationActive {
             peripheral.setNotifyValue(true, for: historyChar)
             historyNotificationActive = true
         }
-        // Clear current history and request streaming from index 0
+        
         history.removeAll()
         isFetchingHistory = true
-        var start: UInt32 = 0
-        let data = Data(bytes: &start, count: MemoryLayout<UInt32>.size)
-        peripheral.writeValue(data, for: recordIndexChar, type: .withResponse)
+        
+        // Use withUnsafeBytes for safer data construction
+        withUnsafeBytes(of: UInt32(0).littleEndian) { bytes in
+            let data = Data(bytes)
+            peripheral.writeValue(data, for: recordIndexChar, type: .withResponse)
+        }
+        logger.info("Fetching history records")
     }
     
-    func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
-        guard error == nil else {
-            print("Error discovering characteristics: \(error!.localizedDescription)")
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        if let error = error {
+            Task { @MainActor in
+                logger.error("Error discovering characteristics: \(error.localizedDescription)")
+            }
             return
         }
         
         guard let characteristics = service.characteristics else {
-            print("No characteristics found")
+            Task { @MainActor in
+                logger.warning("No characteristics found")
+            }
             return
         }
         
-        print("Got characteristics!")
-        
-        for characteristic in characteristics {
-            if characteristic.uuid == LYWSD02UUID.Characteristic.Time.rawValue.cbuuid! {
-                print("Found time characteristic in service. Time support is available.")
-                hasTimeSupport = true
-                if !autoTimeSynced { // perform one automatic sync with current system time
-                    autoTimeSynced = true
-                    let scheduledAt = Date()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { // slight delay to ensure peripheral ready
-                        self.syncTime(target: scheduledAt)
-                        DispatchQueue.main.async { self.lastAutoTimeSyncAt = Date() }
+        Task { @MainActor in
+            logger.info("Discovered \(characteristics.count) characteristics")
+            
+            for characteristic in characteristics {
+                if characteristic.uuid == LYWSD02UUID.Characteristic.Time.cbuuid {
+                    logger.info("Time support available")
+                    self.hasTimeSupport = true
+                    if !self.autoTimeSynced {
+                        self.autoTimeSynced = true
+                        let scheduledAt = Date()
+                        Task {
+                            try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
+                            self.syncTime(target: scheduledAt)
+                            self.lastAutoTimeSyncAt = Date()
+                        }
                     }
+                }
+                
+                if characteristic.uuid == LYWSD02UUID.Characteristic.Battery.cbuuid {
+                    logger.info("Battery support available")
+                    self.hasBatterySupport = true
+                }
+                
+                if characteristic.uuid == LYWSD02UUID.Characteristic.SensorData.cbuuid {
+                    logger.info("Sensor data support available")
+                    peripheral.setNotifyValue(true, for: characteristic)
+                    self.hasTemperatureSupport = true
+                    self.hasHumiditySupport = true
+                }
+                
+                if characteristic.uuid == LYWSD02UUID.Characteristic.History.cbuuid {
+                    self.hasHistorySupport = true
+                }
+                if characteristic.uuid == LYWSD02UUID.Characteristic.NumRecords.cbuuid {
+                    self.hasHistorySupport = true
+                }
+                if characteristic.uuid == LYWSD02UUID.Characteristic.RecordIndex.cbuuid {
+                    self.hasHistorySupport = true
                 }
             }
             
-            if characteristic.uuid == LYWSD02UUID.Characteristic.Battery.rawValue.cbuuid! {
-                print("Found battery characteristic in service. Battery support is available.")
-                hasBatterySupport = true
-            }
-            
-            if characteristic.uuid == LYWSD02UUID.Characteristic.SensorData.rawValue.cbuuid! {
-                print("Found sensor data characteristics, subscribing.")
-                peripheral.setNotifyValue(true, for: characteristic)
-                hasTemperatureSupport = true
-                hasHumiditySupport = true
-            }
-            if characteristic.uuid == LYWSD02UUID.Characteristic.History.rawValue.cbuuid! {
-                hasHistorySupport = true
-            }
-            if characteristic.uuid == LYWSD02UUID.Characteristic.NumRecords.rawValue.cbuuid! {
-                hasHistorySupport = true
-            }
-            if characteristic.uuid == LYWSD02UUID.Characteristic.RecordIndex.rawValue.cbuuid! {
-                hasHistorySupport = true
-            }
+            self.sync()
         }
-        
-        sync()
     }
     
-    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard error == nil else {
-            print("Error updating value for characteristic: \(error!.localizedDescription)")
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let error = error {
+            Task { @MainActor in
+                logger.error("Error updating value: \(error.localizedDescription)")
+            }
             return
         }
         
         guard let data = characteristic.value else {
-            print("No data received for characteristic \(characteristic.uuid)")
+            Task { @MainActor in
+                logger.warning("No data received for characteristic \(characteristic.uuid)")
+            }
             return
         }
         
+        Task { @MainActor in
+            await self.handleCharacteristicUpdate(characteristic: characteristic, data: data)
+        }
+    }
+    
+    private func handleCharacteristicUpdate(characteristic: CBCharacteristic, data: Data) async {
         switch characteristic.uuid {
-        case LYWSD02UUID.Characteristic.Time.rawValue.cbuuid!:
+        case LYWSD02UUID.Characteristic.Time.cbuuid:
             do {
                 let unpacked = try unpack("<Ib", data)
-                let date = Date(timeIntervalSince1970: TimeInterval(unpacked[0] as! Int))
-                DispatchQueue.main.async { self.currentTime = date }
-            } catch { print("Error unpacking time data: \(error.localizedDescription)") }
-        case LYWSD02UUID.Characteristic.Battery.rawValue.cbuuid!:
-            if let firstByte = data.first { DispatchQueue.main.async { self.batteryPercentage = Int(firstByte) } }
-        case LYWSD02UUID.Characteristic.SensorData.rawValue.cbuuid!:
+                guard let timestamp = unpacked[0] as? Int else {
+                    logger.error("Invalid time data type")
+                    return
+                }
+                self.currentTime = Date(timeIntervalSince1970: TimeInterval(timestamp))
+                logger.debug("Updated time: \(self.currentTime?.description ?? "nil")")
+            } catch {
+                logger.error("Error unpacking time data: \(error.localizedDescription)")
+            }
+            
+        case LYWSD02UUID.Characteristic.Battery.cbuuid:
+            if let firstByte = data.first, firstByte <= 100 {
+                self.batteryPercentage = Int(firstByte)
+                logger.debug("Battery: \(firstByte)%")
+            } else {
+                logger.warning("Invalid battery value: \(data.first ?? 0)")
+            }
+            
+        case LYWSD02UUID.Characteristic.SensorData.cbuuid:
             do {
                 let unpacked = try unpack("<hB", data)
-                DispatchQueue.main.async {
-                    self.currentTemperature = Double(unpacked[0] as! Int) / 100
-                    self.currentHumidity = unpacked[1] as? Int
+                guard let tempRaw = unpacked[0] as? Int,
+                      let humidity = unpacked[1] as? Int else {
+                    logger.error("Invalid sensor data types")
+                    return
                 }
-            } catch { print("Error unpacking sensor data: \(error.localizedDescription)") }
-        case LYWSD02UUID.Characteristic.NumRecords.rawValue.cbuuid!:
+                let temperature = Double(tempRaw) / 100.0
+                // Validate reasonable ranges
+                if (-40...80).contains(temperature) && (0...100).contains(humidity) {
+                    self.currentTemperature = temperature
+                    self.currentHumidity = humidity
+                    logger.debug("Sensor: \(temperature)°C, \(humidity)%")
+                } else {
+                    logger.warning("Sensor values out of range: \(temperature)°C, \(humidity)%")
+                }
+            } catch {
+                logger.error("Error unpacking sensor data: \(error.localizedDescription)")
+            }
+            
+        case LYWSD02UUID.Characteristic.NumRecords.cbuuid:
             if data.count == 8 {
                 let total = data.withUnsafeBytes { $0.load(fromByteOffset: 0, as: UInt32.self) }
                 let current = data.withUnsafeBytes { $0.load(fromByteOffset: 4, as: UInt32.self) }
-                DispatchQueue.main.async {
-                    self.totalHistoryRecords = Int(total)
-                    self.currentHistoryRecords = Int(current)
-                }
+                self.totalHistoryRecords = Int(total)
+                self.currentHistoryRecords = Int(current)
+                logger.info("History records: \(current)/\(total)")
             }
-        case LYWSD02UUID.Characteristic.History.rawValue.cbuuid!:
-            // Expect <IIhBhB (idx, ts, max_temp, max_hum, min_temp, min_hum)
-            if data.count == 4+4+2+1+2+1 {
+            
+        case LYWSD02UUID.Characteristic.History.cbuuid:
+            if data.count == 14 {
                 do {
                     let unpacked = try unpack("<IIhBhB", data)
-                    let idx = unpacked[0] as! Int
-                    let ts = TimeInterval(unpacked[1] as! Int)
-                    let maxTempRaw = unpacked[2] as! Int
-                    let maxHum = unpacked[3] as! Int
-                    let minTempRaw = unpacked[4] as! Int
-                    let minHum = unpacked[5] as! Int
-                    let rec = HistoryRecord(id: idx, timestamp: Date(timeIntervalSince1970: ts), minTemperature: Double(minTempRaw)/100.0, minHumidity: minHum, maxTemperature: Double(maxTempRaw)/100.0, maxHumidity: maxHum)
-                    DispatchQueue.main.async {
-                        self.history.append(rec)
-                        // If we know currentHistoryRecords and reached it, mark done
-                        if let expected = self.currentHistoryRecords, self.history.count >= expected {
-                            self.isFetchingHistory = false
-                        }
+                    guard let idx = unpacked[0] as? Int,
+                          let ts = unpacked[1] as? Int,
+                          let maxTempRaw = unpacked[2] as? Int,
+                          let maxHum = unpacked[3] as? Int,
+                          let minTempRaw = unpacked[4] as? Int,
+                          let minHum = unpacked[5] as? Int else {
+                        logger.error("Invalid history data types")
+                        return
                     }
-                } catch { print("Error unpacking history data: \(error.localizedDescription)") }
+                    
+                    let rec = HistoryRecord(
+                        id: idx,
+                        timestamp: Date(timeIntervalSince1970: TimeInterval(ts)),
+                        minTemperature: Double(minTempRaw) / 100.0,
+                        minHumidity: minHum,
+                        maxTemperature: Double(maxTempRaw) / 100.0,
+                        maxHumidity: maxHum
+                    )
+                    self.history.append(rec)
+                    
+                    if let expected = self.currentHistoryRecords, self.history.count >= expected {
+                        self.isFetchingHistory = false
+                        logger.info("History fetch complete: \(self.history.count) records")
+                    }
+                } catch {
+                    logger.error("Error unpacking history data: \(error.localizedDescription)")
+                }
             }
+            
         default:
-            print("Unknown characteristic was updated")
+            logger.debug("Unknown characteristic updated: \(characteristic.uuid)")
         }
     }
 }
