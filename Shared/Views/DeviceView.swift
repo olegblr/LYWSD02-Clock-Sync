@@ -379,9 +379,24 @@ private extension DeviceView {
                 .labelsHidden()
                 .datePickerStyle(.graphical)
             HStack {
-                Button { peripheral.syncTime(target: targetDate) } label: { Label("Set", systemImage: "clock.badge.checkmark") }
+                Button {
+                    do {
+                        try peripheral.syncTime(target: targetDate)
+                    } catch {
+                        // TODO: Show error alert to user
+                        print("❌ Failed to sync time: \(error.localizedDescription)")
+                    }
+                } label: { Label("Set", systemImage: "clock.badge.checkmark") }
                     .buttonStyle(.borderedProminent)
-                Button { peripheral.syncTime(target: Date()); targetDate = Date() } label: { Label("Now", systemImage: "clock.arrow.2.circlepath") }
+                Button {
+                    do {
+                        try peripheral.syncTime(target: Date())
+                        targetDate = Date()
+                    } catch {
+                        // TODO: Show error alert to user
+                        print("❌ Failed to sync time: \(error.localizedDescription)")
+                    }
+                } label: { Label("Now", systemImage: "clock.arrow.2.circlepath") }
                     .buttonStyle(.bordered)
             }
             .controlSize(.small)

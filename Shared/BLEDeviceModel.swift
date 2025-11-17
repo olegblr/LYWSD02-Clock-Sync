@@ -26,6 +26,8 @@ final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
     private var _peripheral: CBPeripheral
     // One-time auto time sync guard per connection
     private var autoTimeSynced = false
+    // Task for auto-sync cancellation
+    private var autoSyncTask: Task<Void, Never>?
     // Record when an automatic time sync happened
     @Published private(set) var lastAutoTimeSyncAt: Date? = nil
     // History support
@@ -77,27 +79,72 @@ final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
         }
     }
     
-    func syncTime(target: Date) {
+    // ✅ УЛУЧШЕНО: С валидацией и error handling
+    func syncTime(target: Date) throws {
         guard hasTimeSupport else {
-            logger.warning("Attempted to sync time without time support")
-            return
+            throw BLEError.characteristicNotFound
         }
         
-        guard let service = peripheral.services?.first(where: { $0.uuid == LYWSD02UUID.Service.Data.cbuuid }) else {
-            logger.error("Data service not found")
-            return
+        // Валидация времени
+        let now = Date()
+        let maxFuture = now.addingTimeInterval(365 * 24 * 3600) // +1 год
+        let minPast = now.addingTimeInterval(-10 * 365 * 24 * 3600) // -10 лет
+        
+        guard (minPast...maxFuture).contains(target) else {
+            throw BLEError.invalidData(reason: "Time out of valid range")
         }
         
-        guard let timeCharacteristic = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.Time.cbuuid }) else {
-            logger.error("Time characteristic not found")
-            return
+        guard let service = peripheral.services?.first(where: { $0.uuid == LYWSD02UUID.Service.Data.cbuuid }),
+              let timeCharacteristic = service.characteristics?.first(where: { $0.uuid == LYWSD02UUID.Characteristic.Time.cbuuid }) else {
+            throw BLEError.characteristicNotFound
         }
         
         let timezone = TimeZone.current
-        let time = Time(timestamp: Int(target.timeIntervalSince1970), timezoneOffset: timezone.secondsFromGMT() / 3600)
+        let offsetHours = timezone.secondsFromGMT() / 3600
         
+        guard LYWSD02Constants.Ranges.timezoneOffset.contains(offsetHours) else {
+            throw BLEError.invalidData(reason: "Invalid timezone offset: \(offsetHours)")
+        }
+        
+        let time = Time(timestamp: Int(target.timeIntervalSince1970), timezoneOffset: offsetHours)
         peripheral.writeValue(time.data(), for: timeCharacteristic, type: .withResponse)
-        logger.info("Writing time to device")
+        
+        logger.info("⏰ Writing time to device: \(target)")
+    }
+    
+    // ✅ НОВОЕ: Безопасный auto-sync
+    private func scheduleAutoTimeSync() {
+        guard !autoTimeSynced else { return }
+        autoTimeSynced = true
+        
+        logger.info("⏰ Scheduling auto time sync...")
+        
+        autoSyncTask = Task { [weak self] in
+            guard let self = self else { return }
+            
+            // Задержка 200ms
+            try? await Task.sleep(nanoseconds: UInt64(LYWSD02Constants.autoSyncDelay * 1_000_000_000))
+            
+            guard !Task.isCancelled else {
+                self.logger.info("⚠️ Auto-sync cancelled")
+                return
+            }
+            
+            // Проверить состояние подключения
+            guard self.peripheral.state == .connected else {
+                self.logger.warning("⚠️ Auto-sync skipped: device disconnected")
+                return
+            }
+            
+            // Выполнить синхронизацию
+            do {
+                try self.syncTime(target: Date())
+                self.lastAutoTimeSyncAt = Date()
+                self.logger.info("✅ Auto time sync completed")
+            } catch {
+                self.logger.error("❌ Auto-sync failed: \(error.localizedDescription)")
+            }
+        }
     }
     
     nonisolated func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
@@ -196,8 +243,12 @@ final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
                         let scheduledAt = Date()
                         Task {
                             try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
-                            self.syncTime(target: scheduledAt)
-                            self.lastAutoTimeSyncAt = Date()
+                            do {
+                                try self.syncTime(target: scheduledAt)
+                                self.lastAutoTimeSyncAt = Date()
+                            } catch {
+                                self.logger.error("Auto-sync failed: \(error.localizedDescription)")
+                            }
                         }
                     }
                 }
