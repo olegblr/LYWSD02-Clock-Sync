@@ -14,6 +14,10 @@ struct LYWSD02UUID {
         case Unknown1 = "181A" // in advertisement
         case Unknown2 = "FEF5" // in advertisement
         case Data = "EBE0CCB0-7A0A-4B0C-8A1A-6FF2997DA3A6"
+        
+        var cbuuid: CBUUID {
+            return CBUUID(string: self.rawValue)
+        }
     }
     
     enum Characteristic: String {
@@ -25,7 +29,17 @@ struct LYWSD02UUID {
         case History = "EBE0CCBC-7A0A-4B0C-8A1A-6FF2997DA3A6" // READ NOTIFY (stream of history records)
         case NumRecords = "EBE0CCB9-7A0A-4B0C-8A1A-6FF2997DA3A6" // 8 bytes total & current counts, READ
         case RecordIndex = "EBE0CCBA-7A0A-4B0C-8A1A-6FF2997DA3A6" // 4 bytes, READ WRITE
+        
+        var cbuuid: CBUUID {
+            return CBUUID(string: self.rawValue)
+        }
     }
+    
+    // Precomputed constants for performance
+    static let serviceCBUUIDs: [CBUUID] = [
+        Service.Unknown1.cbuuid,
+        Service.Unknown2.cbuuid
+    ]
 }
 
 extension String {
