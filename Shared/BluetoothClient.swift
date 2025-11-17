@@ -81,7 +81,17 @@ class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
             return
         }
         
+        let peripheralID = model.peripheral.identifier
+        
+        // Cancel any pending timeout
+        connectionTimeouts[peripheralID]?.cancel()
+        connectionTimeouts.removeValue(forKey: peripheralID)
+        
+        // Reset reconnection attempts
+        reconnectionAttempts.removeValue(forKey: peripheralID)
+        
         manager.cancelPeripheralConnection(model.peripheral)
+        logger.info("🔌 Disconnecting from \(model.name)")
     }
     
     // ✅ УЛУЧШЕНО: С кэшированием (O(1) вместо O(n))
