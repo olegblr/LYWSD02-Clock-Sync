@@ -113,41 +113,19 @@ public func unhexlify(_ string:String) -> Data? {
     return data
 }
 
-func readIntegerType<T:DataConvertible>(_ type:T.Type, bytes:[UInt8], loc:inout Int) throws -> T {
+func readIntegerType<T:DataConvertible>(_ type:T.Type, bytes:[UInt8], loc:inout Int) -> T {
     let size = MemoryLayout<T>.size
-    
-    // Bounds checking to prevent crash
-    guard loc + size <= bytes.count else {
-        throw BinUtilsError.dataOutOfBounds(expected: loc + size, actual: bytes.count)
-    }
-    
     let sub = Array(bytes[loc..<(loc+size)])
     loc += size
-    
-    guard let result = T(bytes: sub) else {
-        throw BinUtilsError.invalidDataSize(expected: size, actual: sub.count)
-    }
-    
-    return result
+    return T(bytes: sub)!
 }
 
-func readFloatingPointType<T:DataConvertible>(_ type:T.Type, bytes:[UInt8], loc:inout Int, isBigEndian:Bool) throws -> T {
+func readFloatingPointType<T:DataConvertible>(_ type:T.Type, bytes:[UInt8], loc:inout Int, isBigEndian:Bool) -> T {
     let size = MemoryLayout<T>.size
-    
-    // Bounds checking to prevent crash
-    guard loc + size <= bytes.count else {
-        throw BinUtilsError.dataOutOfBounds(expected: loc + size, actual: bytes.count)
-    }
-    
     let sub = Array(bytes[loc..<(loc+size)])
     loc += size
     let sub_ = isBigEndian ? sub.reversed() : sub
-    
-    guard let result = T(bytes: sub_) else {
-        throw BinUtilsError.invalidDataSize(expected: size, actual: sub_.count)
-    }
-    
-    return result
+    return T(bytes: sub_)!
 }
 
 func isBigEndianFromMandatoryByteOrderFirstCharacter(_ format:String) -> Bool {
@@ -240,8 +218,6 @@ func formatDoesMatchDataLength(_ format:String, data:Data) -> Bool {
 public enum BinUtilsError: Error {
     case formatDoesMatchDataLength(format:String, dataSize:Int)
     case unsupportedFormat(character:Character)
-    case dataOutOfBounds(expected:Int, actual:Int)
-    case invalidDataSize(expected:Int, actual:Int)
 }
 
 public func pack(_ format:String, _ objects:[Any], _ stringEncoding:String.Encoding=String.Encoding.windowsCP1252) -> Data {

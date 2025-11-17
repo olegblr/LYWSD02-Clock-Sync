@@ -240,8 +240,6 @@ func formatDoesMatchDataLength(_ format:String, data:Data) -> Bool {
 public enum BinUtilsError: Error {
     case formatDoesMatchDataLength(format:String, dataSize:Int)
     case unsupportedFormat(character:Character)
-    case dataOutOfBounds(expected:Int, actual:Int)
-    case invalidDataSize(expected:Int, actual:Int)
 }
 
 public func pack(_ format:String, _ objects:[Any], _ stringEncoding:String.Encoding=String.Encoding.windowsCP1252) -> Data {
@@ -392,12 +390,6 @@ public func unpack(_ format:String, _ data:Data, _ stringEncoding:String.Encodin
         
         if c == "s" {
             let length = max(n,1)
-            
-            // Bounds checking to prevent crash
-            guard loc + length <= bytes.count else {
-                throw BinUtilsError.dataOutOfBounds(expected: loc + length, actual: bytes.count)
-            }
-            
             let sub = Array(bytes[loc..<loc+length])
             
             guard let s = NSString(bytes: sub, length: length, encoding: stringEncoding.rawValue) else {
@@ -421,57 +413,48 @@ public func unpack(_ format:String, _ data:Data, _ stringEncoding:String.Encodin
             switch(c) {
                 
             case "c":
-                // Bounds checking for single character
-                guard loc < bytes.count else {
-                    throw BinUtilsError.dataOutOfBounds(expected: loc + 1, actual: bytes.count)
-                }
-                
                 let optionalString = NSString(bytes: [bytes[loc]], length: 1, encoding: String.Encoding.utf8.rawValue)
                 loc += 1
                 guard let s = optionalString else { assertionFailure(); return [] }
                 o = s
             case "b":
-                let r = try readIntegerType(Int8.self, bytes:bytes, loc:&loc)
+                let r = readIntegerType(Int8.self, bytes:bytes, loc:&loc)
                 o = Int(r)
             case "B":
-                let r = try readIntegerType(UInt8.self, bytes:bytes, loc:&loc)
+                let r = readIntegerType(UInt8.self, bytes:bytes, loc:&loc)
                 o = Int(r)
             case "?":
-                let r = try readIntegerType(Bool.self, bytes:bytes, loc:&loc)
+                let r = readIntegerType(Bool.self, bytes:bytes, loc:&loc)
                 o = r ? true : false
             case "h":
-                let r = try readIntegerType(Int16.self, bytes:bytes, loc:&loc)
+                let r = readIntegerType(Int16.self, bytes:bytes, loc:&loc)
                 o = Int(isBigEndian ? Int16(bigEndian: r) : r)
             case "H":
-                let r = try readIntegerType(UInt16.self, bytes:bytes, loc:&loc)
+                let r = readIntegerType(UInt16.self, bytes:bytes, loc:&loc)
                 o = Int(isBigEndian ? UInt16(bigEndian: r) : r)
             case "i":
                 fallthrough
             case "l":
-                let r = try readIntegerType(Int32.self, bytes:bytes, loc:&loc)
+                let r = readIntegerType(Int32.self, bytes:bytes, loc:&loc)
                 o = Int(isBigEndian ? Int32(bigEndian: r) : r)
             case "I":
                 fallthrough
             case "L":
-                let r = try readIntegerType(UInt32.self, bytes:bytes, loc:&loc)
+                let r = readIntegerType(UInt32.self, bytes:bytes, loc:&loc)
                 o = Int(isBigEndian ? UInt32(bigEndian: r) : r)
             case "q":
-                let r = try readIntegerType(Int64.self, bytes:bytes, loc:&loc)
+                let r = readIntegerType(Int64.self, bytes:bytes, loc:&loc)
                 o = Int(isBigEndian ? Int64(bigEndian: r) : r)
             case "Q":
-                let r = try readIntegerType(UInt64.self, bytes:bytes, loc:&loc)
+                let r = readIntegerType(UInt64.self, bytes:bytes, loc:&loc)
                 o = Int(isBigEndian ? UInt64(bigEndian: r) : r)
             case "f":
-                let r = try readFloatingPointType(Float32.self, bytes:bytes, loc:&loc, isBigEndian:isBigEndian)
+                let r = readFloatingPointType(Float32.self, bytes:bytes, loc:&loc, isBigEndian:isBigEndian)
                 o = Double(r)
             case "d":
-                let r = try readFloatingPointType(Float64.self, bytes:bytes, loc:&loc, isBigEndian:isBigEndian)
+                let r = readFloatingPointType(Float64.self, bytes:bytes, loc:&loc, isBigEndian:isBigEndian)
                 o = Double(r)
             case "x":
-                // Bounds checking for padding byte
-                guard loc < bytes.count else {
-                    throw BinUtilsError.dataOutOfBounds(expected: loc + 1, actual: bytes.count)
-                }
                 loc += 1
             case " ":
                 ()
