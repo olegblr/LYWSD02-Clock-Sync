@@ -9,6 +9,7 @@ import CoreBluetooth
 import Foundation
 import os.log
 
+@MainActor
 class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
     @Published public var discoveredPeripherals: [BLEDeviceModel] = []
     
@@ -33,24 +34,26 @@ class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
         self.manager = CBCentralManager(delegate: self, queue: nil)
     }
     
-    func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        switch central.state {
-        case .unknown:
-            print("central.state is .unknown")
-        case .resetting:
-            print("central.state is .resetting")
-        case .unsupported:
-            print("central.state is .unsupported")
-        case .unauthorized:
-            print("central.state is .unauthorized")
-        case .poweredOff:
-            print("central.state is .poweredOff")
-            stopScan()
-        case .poweredOn:
-            print("central.state is .poweredOn")
-            triggerScan()
-        @unknown default:
-            print("Unknown state")
+    nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        Task { @MainActor in
+            switch central.state {
+            case .unknown:
+                print("central.state is .unknown")
+            case .resetting:
+                print("central.state is .resetting")
+            case .unsupported:
+                print("central.state is .unsupported")
+            case .unauthorized:
+                print("central.state is .unauthorized")
+            case .poweredOff:
+                print("central.state is .poweredOff")
+                stopScan()
+            case .poweredOn:
+                print("central.state is .poweredOn")
+                triggerScan()
+            @unknown default:
+                print("Unknown state")
+            }
         }
     }
     
@@ -82,32 +85,36 @@ class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
     }
     
     // ✅ УЛУЧШЕНО: С кэшированием (O(1) вместо O(n))
-    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
+    nonisolated func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber)
     {
         let peripheralID = peripheral.identifier
+        let peripheralName = peripheral.name ?? "Unknown"
         
-        // Переиспользовать модель из кэша или создать новую
-        let model: BLEDeviceModel
-        if let cached = peripheralCache[peripheralID] {
-            model = cached
-        } else {
-            model = BLEDeviceModel(peripheral)
-            peripheralCache[peripheralID] = model
-            logger.info("📱 Discovered new device: \(peripheral.name ?? "Unknown") (\(peripheralID.uuidString))")
-        }
-        
-        // Добавить в список если еще нет
-        if !discoveredPeripherals.contains(where: { $0.peripheral.identifier == peripheralID }) {
-            discoveredPeripherals.append(model)
+        Task { @MainActor in
+            // Переиспользовать модель из кэша или создать новую
+            let model: BLEDeviceModel
+            if let cached = peripheralCache[peripheralID] {
+                model = cached
+            } else {
+                model = BLEDeviceModel(peripheral)
+                peripheralCache[peripheralID] = model
+                logger.info("📱 Discovered new device: \(peripheralName) (\(peripheralID.uuidString))")
+            }
+            
+            // Добавить в список если еще нет
+            if !discoveredPeripherals.contains(where: { $0.peripheral.identifier == peripheralID }) {
+                discoveredPeripherals.append(model)
+            }
         }
     }
     
     // ✅ НОВОЕ: Обработка успешного подключения
     nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        let peripheralID = peripheral.identifier
+        let peripheralName = peripheral.name ?? "Unknown"
+        
         Task { @MainActor in
-            let peripheralID = peripheral.identifier
-            
             // Отменить таймаут
             connectionTimeouts[peripheralID]?.cancel()
             connectionTimeouts.removeValue(forKey: peripheralID)
@@ -115,29 +122,32 @@ class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
             // Сбросить счетчик переподключений
             reconnectionAttempts.removeValue(forKey: peripheralID)
             
-            logger.info("✅ Connected to \(peripheral.name ?? "Unknown")")
-            peripheral.discoverServices(nil)
+            logger.info("✅ Connected to \(peripheralName)")
         }
+        
+        peripheral.discoverServices(nil)
     }
     
     // ✅ НОВОЕ: Обработка отключения с auto-reconnect
     nonisolated func centralManager(_ central: CBCentralManager,
                        didDisconnectPeripheral peripheral: CBPeripheral,
                        error: Error?) {
+        let peripheralID = peripheral.identifier
+        let peripheralName = peripheral.name ?? "Unknown"
+        let errorDescription = error?.localizedDescription
+        
         Task { @MainActor in
-            let peripheralID = peripheral.identifier
+            logger.warning("⚠️ Disconnected from \(peripheralName)")
             
-            logger.warning("⚠️ Disconnected from \(peripheral.name ?? "Unknown")")
-            
-            if let error = error {
-                logger.error("Disconnect error: \(error.localizedDescription)")
+            if let errorDescription = errorDescription {
+                logger.error("Disconnect error: \(errorDescription)")
             }
             
             // Попытаться переподключиться
             let attempts = reconnectionAttempts[peripheralID, default: 0]
             
-            guard attempts < maxReconnectionAttempts else {
-                logger.error("❌ Max reconnection attempts reached for \(peripheral.name ?? "Unknown")")
+            guard attempts < self.maxReconnectionAttempts else {
+                logger.error("❌ Max reconnection attempts reached for \(peripheralName)")
                 reconnectionAttempts.removeValue(forKey: peripheralID)
                 return
             }
@@ -147,14 +157,14 @@ class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
             // Экспоненциальная задержка: 1s, 2s, 4s
             let delay = pow(2.0, Double(attempts))
             
-            logger.info("🔄 Will reconnect to \(peripheral.name ?? "Unknown") in \(delay)s (attempt \(attempts + 1)/\(maxReconnectionAttempts))")
+            logger.info("🔄 Will reconnect to \(peripheralName) in \(delay)s (attempt \(attempts + 1)/\(self.maxReconnectionAttempts))")
             
             Task {
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 
                 // Найти модель устройства
-                if let model = peripheralCache[peripheralID] {
-                    connect(to: model)
+                if let model = self.peripheralCache[peripheralID] {
+                    self.connect(to: model)
                 }
             }
         }
@@ -164,13 +174,15 @@ class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
     nonisolated func centralManager(_ central: CBCentralManager,
                        didFailToConnect peripheral: CBPeripheral,
                        error: Error?) {
+        let peripheralID = peripheral.identifier
+        let peripheralName = peripheral.name ?? "Unknown"
+        let errorDescription = error?.localizedDescription ?? "Unknown error"
+        
         Task { @MainActor in
-            let peripheralID = peripheral.identifier
-            
             connectionTimeouts[peripheralID]?.cancel()
             connectionTimeouts.removeValue(forKey: peripheralID)
             
-            logger.error("❌ Failed to connect to \(peripheral.name ?? "Unknown"): \(error?.localizedDescription ?? "Unknown error")")
+            logger.error("❌ Failed to connect to \(peripheralName): \(errorDescription)")
         }
     }
 }

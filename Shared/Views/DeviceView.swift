@@ -434,6 +434,4 @@ private extension View {
             )
             .shadow(color: Color.black.opacity(0.15), radius: 18, x: 0, y: 8)
     }
-    func flexPriority() -> some View { self.layoutPriority(1) }
-    func centeredInScroll() -> some View { self.frame(maxWidth: .infinity) }
 }
