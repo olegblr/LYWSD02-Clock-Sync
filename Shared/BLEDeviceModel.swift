@@ -282,20 +282,21 @@ final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
     
     nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         if let error = error {
-            Task { @MainActor in
-                logger.error("Error updating value: \(error.localizedDescription)")
+            Task { @MainActor [weak self] in
+                self?.logger.error("Error updating value: \(error.localizedDescription)")
             }
             return
         }
         
         guard let data = characteristic.value else {
-            Task { @MainActor in
-                logger.warning("No data received for characteristic \(characteristic.uuid)")
+            Task { @MainActor [weak self] in
+                self?.logger.warning("No data received for characteristic \(characteristic.uuid)")
             }
             return
         }
         
-        Task { @MainActor in
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
             await self.handleCharacteristicUpdate(characteristic: characteristic, data: data)
         }
     }

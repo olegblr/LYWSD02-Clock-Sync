@@ -35,7 +35,9 @@ class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
     }
     
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        Task { @MainActor in
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            
             switch central.state {
             case .unknown:
                 print("central.state is .unknown")
@@ -47,10 +49,10 @@ class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
                 print("central.state is .unauthorized")
             case .poweredOff:
                 print("central.state is .poweredOff")
-                stopScan()
+                self.stopScan()
             case .poweredOn:
                 print("central.state is .poweredOn")
-                triggerScan()
+                self.triggerScan()
             @unknown default:
                 print("Unknown state")
             }
@@ -101,7 +103,8 @@ class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
         let peripheralID = peripheral.identifier
         let peripheralName = peripheral.name ?? "Unknown"
         
-        Task { @MainActor in
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
             // Переиспользовать модель из кэша или создать новую
             let model: BLEDeviceModel
             if let cached = peripheralCache[peripheralID] {
@@ -124,7 +127,8 @@ class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
         let peripheralID = peripheral.identifier
         let peripheralName = peripheral.name ?? "Unknown"
         
-        Task { @MainActor in
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
             // Отменить таймаут
             connectionTimeouts[peripheralID]?.cancel()
             connectionTimeouts.removeValue(forKey: peripheralID)
@@ -146,8 +150,9 @@ class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
         let peripheralName = peripheral.name ?? "Unknown"
         let errorDescription = error?.localizedDescription
         
-        Task { @MainActor in
-            logger.warning("⚠️ Disconnected from \(peripheralName)")
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            self.logger.warning("⚠️ Disconnected from \(peripheralName)")
             
             if let errorDescription = errorDescription {
                 logger.error("Disconnect error: \(errorDescription)")
@@ -169,9 +174,9 @@ class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
             
             logger.info("🔄 Will reconnect to \(peripheralName) in \(delay)s (attempt \(attempts + 1)/\(self.maxReconnectionAttempts))")
             
-            Task {
+            Task { [weak self] in
+                guard let self = self else { return }
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                
                 // Найти модель устройства
                 if let model = self.peripheralCache[peripheralID] {
                     self.connect(to: model)
@@ -188,8 +193,9 @@ class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
         let peripheralName = peripheral.name ?? "Unknown"
         let errorDescription = error?.localizedDescription ?? "Unknown error"
         
-        Task { @MainActor in
-            connectionTimeouts[peripheralID]?.cancel()
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            self.connectionTimeouts[peripheralID]?.cancel()
             connectionTimeouts.removeValue(forKey: peripheralID)
             
             logger.error("❌ Failed to connect to \(peripheralName): \(errorDescription)")
