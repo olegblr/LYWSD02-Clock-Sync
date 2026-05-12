@@ -9,14 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Production Readiness Fixes (2026-05-12)
+
+#### Fixed (P0 — Blockers)
+- Added `NSBluetoothAlwaysUsageDescription` and `NSBluetoothPeripheralUsageDescription` to both iOS and macOS Info.plist (the app would otherwise crash on first BLE access and be rejected from the App Store).
+- Added `com.apple.security.device.bluetooth` and `com.apple.security.app-sandbox` entitlements for macOS.
+- Implemented real connection-timeout `Task` in `BLEClient.connect(to:)`. Previously the dictionary was checked but never populated — connection attempts hung indefinitely.
+- Removed the duplicate inline auto-time-sync block in `BLEDeviceModel.didDiscoverCharacteristicsFor`; now the cancellable `scheduleAutoTimeSync()` is the only path.
+- Adaptive parsing of the `Time` characteristic to handle both 5-byte (`<Ib`) and 4-byte (`<I`) firmware variants without crashing.
+- `Timer.publish` cadence and `sync()` now respect `peripheral.connectionState == .connected`.
+
+#### Fixed (P1 — High Priority)
+- Removed leftover/dead-code files from the repo (`BluetoothClient_Improvements.swift`, `CRITICAL_FIXES.swift`, `BinUtils.swift.backup`, the committed `.app` bundle).
+- Added a proper `.gitignore` (DerivedData, `.DS_Store`, built `.app`s, `.pxd`, etc.).
+- Replaced O(n²) `hexlify` implementation with a one-pass `map`/`joined`.
+- `pack(...)` now `throws` instead of using `assertionFailure` + `as!` force-casts (which would crash in release builds).
+- `isBigEndianFromMandatoryByteOrderFirstCharacter(...)` now `throws`.
+- Replaced raw `print()` calls in `BluetoothClient` with `os.Logger`, with `.privacy(.private(mask: .hash))` for device names/UUIDs.
+- UI now surfaces sync errors via SwiftUI `alert(...)` instead of silently logging.
+- Auto-reconnect honours an `intentionalDisconnects` set, so user-initiated disconnects no longer trigger reconnect storms.
+- `BLEDeviceModel.fetchHistory()` now caps at `LYWSD02Constants.maxHistoryRecords` and dedupes records by device-provided index.
+- `DeviceView` sorts the history once in `filteredHistory`, not twice per redraw.
+
+#### Fixed (P2 — Medium Priority)
+- New `@Published var bluetoothState: CBManagerState` on `BLEClient` plus a `lastError: BLEError?` channel; `ContentView` shows actionable status views for `.poweredOff` / `.unauthorized` / `.unsupported` / `.resetting`.
+- New `@Published var connectionState: CBPeripheralState` on `BLEDeviceModel` so SwiftUI re-renders the toolbar reliably.
+- Stale-device cleanup: discovered peripherals not seen for `LYWSD02Constants.staleDeviceTimeout` seconds are pruned (connected/connecting devices are preserved).
+- `discoverServices` now restricts to `[LYWSD02UUID.Service.Data.cbuuid]` for faster, lighter discovery.
+- All hardcoded magic numbers (`200_000_000`, `365 * 24 * 3600`, valid sensor/battery ranges, refresh interval) routed through `LYWSD02Constants`.
+- Sensor / battery / time-zone validations all use `LYWSD02Constants.Ranges`.
+- Accessibility values added on metric tiles and device-time label.
+
 ### Planned
-- Connection timeout implementation
-- Background mode support
+- Background mode support (`bluetooth-central`)
 - Multiple device support
 - Export history to CSV
 - Widget support (iOS/macOS)
 - Cloud sync capabilities
 - Localization (i18n)
+- Unit-test suite (BinUtils, Time, validations)
 
 ---
 
