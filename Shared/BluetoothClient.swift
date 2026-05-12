@@ -9,6 +9,12 @@ import CoreBluetooth
 import Foundation
 import os.log
 
+/// `CBCentralManager` is initialized with `queue: nil`, so all delegate
+/// callbacks arrive on the main thread. We bridge non-`Sendable`
+/// CoreBluetooth values across the actor boundary using
+/// `UncheckedSendableBox` and then enter `MainActor` via
+/// `assumeIsolated`. This avoids unnecessary `Task` hops while staying
+/// compatible with Swift 6 strict concurrency.
 @MainActor
 final class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
     @Published public private(set) var discoveredPeripherals: [BLEDeviceModel] = []
@@ -18,14 +24,11 @@ final class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
 
     private var manager: CBCentralManager!
 
-    // Cache for peripheral models
     private var peripheralCache: [UUID: BLEDeviceModel] = [:]
     private var lastSeen: [UUID: Date] = [:]
 
-    // Connection management
     private var connectionTimeouts: [UUID: Task<Void, Never>] = [:]
     private var reconnectionAttempts: [UUID: Int] = [:]
-    /// IDs we explicitly asked to disconnect — prevents auto-reconnect for them.
     private var intentionalDisconnects: Set<UUID> = []
 
     private let logger = Logger(subsystem: "com.lywsd02.clocksync", category: "BLEClient")
@@ -39,29 +42,32 @@ final class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
 
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         let state = central.state
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            self.bluetoothState = state
-            self.logger.info("Central state changed: \(state.rawValue, privacy: .public)")
+        MainActor.assumeIsolated {
+            self.handleStateChange(state)
+        }
+    }
 
-            switch state {
-            case .poweredOff:
-                self.lastError = .bluetoothPoweredOff
-                self.stopScan()
-            case .unauthorized:
-                self.lastError = .bluetoothUnauthorized
-                self.stopScan()
-            case .unsupported:
-                self.lastError = .bluetoothUnsupported
-                self.stopScan()
-            case .poweredOn:
-                self.lastError = nil
-                self.triggerScan()
-            case .resetting, .unknown:
-                self.stopScan()
-            @unknown default:
-                break
-            }
+    private func handleStateChange(_ state: CBManagerState) {
+        bluetoothState = state
+        logger.info("Central state changed: \(state.rawValue, privacy: .public)")
+
+        switch state {
+        case .poweredOff:
+            lastError = .bluetoothPoweredOff
+            stopScan()
+        case .unauthorized:
+            lastError = .bluetoothUnauthorized
+            stopScan()
+        case .unsupported:
+            lastError = .bluetoothUnsupported
+            stopScan()
+        case .poweredOn:
+            lastError = nil
+            triggerScan()
+        case .resetting, .unknown:
+            stopScan()
+        @unknown default:
+            break
         }
     }
 
@@ -69,11 +75,7 @@ final class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
 
     func triggerScan() {
         guard manager.state == .poweredOn else { return }
-        // Don't wipe currently connected devices; just refresh "lastSeen".
-        manager.scanForPeripherals(
-            withServices: LYWSD02UUID.serviceCBUUIDs,
-            options: nil
-        )
+        manager.scanForPeripherals(withServices: LYWSD02UUID.serviceCBUUIDs, options: nil)
         scanning = true
         logger.info("Scanning started")
         scheduleStaleCleanup()
@@ -102,8 +104,8 @@ final class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
         let cutoff = Date().addingTimeInterval(-LYWSD02Constants.staleDeviceTimeout)
         let stale = lastSeen.filter { $0.value < cutoff }.map(\.key)
         for id in stale {
-            // Don't drop a device we're connected to.
-            if let model = peripheralCache[id], model.peripheral.state == .connected || model.peripheral.state == .connecting {
+            if let model = peripheralCache[id],
+               model.peripheral.state == .connected || model.peripheral.state == .connecting {
                 continue
             }
             discoveredPeripherals.removeAll { $0.peripheral.identifier == id }
@@ -171,30 +173,35 @@ final class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
                                     didDiscover peripheral: CBPeripheral,
                                     advertisementData: [String: Any],
                                     rssi RSSI: NSNumber) {
+        let box = UncheckedSendableBox(peripheral)
+        MainActor.assumeIsolated {
+            self.handleDiscovered(peripheral: box.value)
+        }
+    }
+
+    private func handleDiscovered(peripheral: CBPeripheral) {
         let id = peripheral.identifier
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            self.lastSeen[id] = Date()
+        lastSeen[id] = Date()
 
-            let model: BLEDeviceModel
-            if let cached = self.peripheralCache[id] {
-                model = cached
-            } else {
-                model = BLEDeviceModel(peripheral)
-                self.peripheralCache[id] = model
-                self.logger.info("Discovered new device: \(peripheral.name ?? "Unknown", privacy: .private(mask: .hash))")
-            }
+        let model: BLEDeviceModel
+        if let cached = peripheralCache[id] {
+            model = cached
+        } else {
+            model = BLEDeviceModel(peripheral)
+            peripheralCache[id] = model
+            logger.info("Discovered new device: \(peripheral.name ?? "Unknown", privacy: .private(mask: .hash))")
+        }
 
-            if !self.discoveredPeripherals.contains(where: { $0.peripheral.identifier == id }) {
-                self.discoveredPeripherals.append(model)
-            }
+        if !discoveredPeripherals.contains(where: { $0.peripheral.identifier == id }) {
+            discoveredPeripherals.append(model)
         }
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        let id = peripheral.identifier
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
+        let box = UncheckedSendableBox(peripheral)
+        MainActor.assumeIsolated {
+            let p = box.value
+            let id = p.identifier
             self.connectionTimeouts[id]?.cancel()
             self.connectionTimeouts.removeValue(forKey: id)
             self.reconnectionAttempts.removeValue(forKey: id)
@@ -202,56 +209,58 @@ final class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
             if let model = self.peripheralCache[id] {
                 model.updateConnectionState(.connected)
             }
-            self.logger.info("Connected to \(peripheral.name ?? "Unknown", privacy: .private(mask: .hash))")
+            self.logger.info("Connected to \(p.name ?? "Unknown", privacy: .private(mask: .hash))")
+            p.discoverServices([LYWSD02UUID.Service.Data.cbuuid])
         }
-
-        peripheral.discoverServices([LYWSD02UUID.Service.Data.cbuuid])
     }
 
     nonisolated func centralManager(_ central: CBCentralManager,
                                     didDisconnectPeripheral peripheral: CBPeripheral,
                                     error: Error?) {
+        let box = UncheckedSendableBox(peripheral)
+        let errBox = UncheckedSendableBox(error)
+        MainActor.assumeIsolated {
+            self.handleDisconnected(peripheral: box.value, error: errBox.value)
+        }
+    }
+
+    private func handleDisconnected(peripheral: CBPeripheral, error: Error?) {
         let id = peripheral.identifier
-        let errorDescription = error?.localizedDescription
-        Task { @MainActor [weak self] in
+        logger.warning("Disconnected from \(peripheral.name ?? "Unknown", privacy: .private(mask: .hash))")
+        if let error = error {
+            logger.error("Disconnect error: \(error.localizedDescription, privacy: .public)")
+        }
+
+        if let model = peripheralCache[id] {
+            model.updateConnectionState(.disconnected)
+            model.handleDisconnection()
+        }
+
+        if intentionalDisconnects.contains(id) {
+            intentionalDisconnects.remove(id)
+            reconnectionAttempts.removeValue(forKey: id)
+            return
+        }
+
+        let attempts = reconnectionAttempts[id, default: 0]
+        guard attempts < LYWSD02Constants.maxReconnectionAttempts else {
+            logger.error("Max reconnection attempts reached")
+            reconnectionAttempts.removeValue(forKey: id)
+            return
+        }
+        reconnectionAttempts[id] = attempts + 1
+
+        let delay = LYWSD02Constants.reconnectionDelays[
+            min(attempts, LYWSD02Constants.reconnectionDelays.count - 1)
+        ]
+        logger.info("Will reconnect in \(delay, privacy: .public)s (attempt \(attempts + 1, privacy: .public))")
+
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard let self = self else { return }
-            self.logger.warning("Disconnected from \(peripheral.name ?? "Unknown", privacy: .private(mask: .hash))")
-            if let errorDescription = errorDescription {
-                self.logger.error("Disconnect error: \(errorDescription, privacy: .public)")
-            }
-
-            if let model = self.peripheralCache[id] {
-                model.updateConnectionState(.disconnected)
-                model.handleDisconnection()
-            }
-
-            // Skip auto-reconnect if user explicitly disconnected.
-            if self.intentionalDisconnects.contains(id) {
-                self.intentionalDisconnects.remove(id)
-                self.reconnectionAttempts.removeValue(forKey: id)
-                return
-            }
-
-            let attempts = self.reconnectionAttempts[id, default: 0]
-            guard attempts < LYWSD02Constants.maxReconnectionAttempts else {
-                self.logger.error("Max reconnection attempts reached")
-                self.reconnectionAttempts.removeValue(forKey: id)
-                return
-            }
-            self.reconnectionAttempts[id] = attempts + 1
-
-            let delay = LYWSD02Constants.reconnectionDelays[
-                min(attempts, LYWSD02Constants.reconnectionDelays.count - 1)
-            ]
-            self.logger.info("Will reconnect in \(delay, privacy: .public)s (attempt \(attempts + 1, privacy: .public))")
-
-            Task { [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                guard let self = self else { return }
-                await MainActor.run {
-                    if let model = self.peripheralCache[id], !self.intentionalDisconnects.contains(id) {
-                        self.connect(to: model)
-                    }
+            await MainActor.run {
+                if let model = self.peripheralCache[id], !self.intentionalDisconnects.contains(id) {
+                    self.connect(to: model)
                 }
             }
         }
@@ -260,17 +269,17 @@ final class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
     nonisolated func centralManager(_ central: CBCentralManager,
                                     didFailToConnect peripheral: CBPeripheral,
                                     error: Error?) {
-        let id = peripheral.identifier
-        let desc = error?.localizedDescription ?? "Unknown error"
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
+        let box = UncheckedSendableBox(peripheral)
+        let errBox = UncheckedSendableBox(error)
+        MainActor.assumeIsolated {
+            let id = box.value.identifier
             self.connectionTimeouts[id]?.cancel()
             self.connectionTimeouts.removeValue(forKey: id)
             if let model = self.peripheralCache[id] {
                 model.updateConnectionState(.disconnected)
             }
-            self.lastError = error.map { .connectionFailed($0) } ?? .connectionTimeout
-            self.logger.error("Failed to connect: \(desc, privacy: .public)")
+            self.lastError = errBox.value.map { .connectionFailed($0) } ?? .connectionTimeout
+            self.logger.error("Failed to connect: \(errBox.value?.localizedDescription ?? "Unknown error", privacy: .public)")
         }
     }
 

@@ -9,6 +9,10 @@ import Foundation
 import CoreBluetooth
 import os.log
 
+/// All `CBPeripheralDelegate` callbacks arrive on the main thread because the
+/// owning `CBCentralManager` was created with `queue: nil`. We bridge non-`Sendable`
+/// CoreBluetooth values across the actor boundary using `UncheckedSendableBox`
+/// and then enter `MainActor` via `assumeIsolated`.
 @MainActor
 final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
     @Published private(set) var hasTimeSupport = false
@@ -26,16 +30,13 @@ final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
 
     private var _peripheral: CBPeripheral
 
-    // One-time auto time sync guard per connection
     private var autoTimeSynced = false
-    // Task for auto-sync cancellation
     private var autoSyncTask: Task<Void, Never>?
 
     @Published private(set) var lastAutoTimeSyncAt: Date? = nil
 
-    // History
     struct HistoryRecord: Identifiable, Hashable {
-        let id: Int // index from device
+        let id: Int
         let timestamp: Date
         let minTemperature: Double
         let minHumidity: Int
@@ -52,7 +53,6 @@ final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
 
     private let logger = Logger(subsystem: "com.lywsd02.clocksync", category: "Device")
 
-    // MARK: - Wrappers
     var identifier: String { peripheral.identifier.uuidString }
     var peripheral: CBPeripheral { self._peripheral }
 
@@ -133,8 +133,6 @@ final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
         logger.info("Writing time to device: \(target, privacy: .public)")
     }
 
-    /// Schedules a one-shot automatic time sync after a short delay so
-    /// characteristic discovery has fully settled.
     private func scheduleAutoTimeSync() {
         guard !autoTimeSynced else { return }
         autoTimeSynced = true
@@ -184,14 +182,15 @@ final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
         logger.info("Fetching history records")
     }
 
-    // MARK: - Delegate
+    // MARK: - CBPeripheralDelegate
 
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        let errorDesc = error?.localizedDescription
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            if let errorDesc = errorDesc {
-                self.logger.error("Failed to write value: \(errorDesc, privacy: .public)")
+    nonisolated func peripheral(_ peripheral: CBPeripheral,
+                                didWriteValueFor characteristic: CBCharacteristic,
+                                error: Error?) {
+        let errBox = UncheckedSendableBox(error)
+        MainActor.assumeIsolated {
+            if let error = errBox.value {
+                self.logger.error("Failed to write value: \(error.localizedDescription, privacy: .public)")
                 return
             }
             self.sync()
@@ -199,42 +198,46 @@ final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
     }
 
     nonisolated func peripheralDidUpdateName(_ peripheral: CBPeripheral) {
-        let newName = peripheral.name ?? "Unknown name"
-        Task { @MainActor [weak self] in
-            self?.name = newName
+        let box = UncheckedSendableBox(peripheral)
+        MainActor.assumeIsolated {
+            self.name = box.value.name ?? "Unknown name"
         }
     }
 
     nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        let errorDesc = error?.localizedDescription
-        let services = peripheral.services
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            if let errorDesc = errorDesc {
-                self.logger.error("Error discovering services: \(errorDesc, privacy: .public)")
+        let pBox = UncheckedSendableBox(peripheral)
+        let errBox = UncheckedSendableBox(error)
+        MainActor.assumeIsolated {
+            let p = pBox.value
+            if let error = errBox.value {
+                self.logger.error("Error discovering services: \(error.localizedDescription, privacy: .public)")
                 return
             }
-            guard let services = services else {
+            guard let services = p.services else {
                 self.logger.warning("No services found")
                 return
             }
             for service in services where service.uuid == LYWSD02UUID.Service.Data.cbuuid {
                 self.logger.info("Found data service, discovering characteristics")
-                peripheral.discoverCharacteristics(nil, for: service)
+                p.discoverCharacteristics(nil, for: service)
             }
         }
     }
 
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
-        let errorDesc = error?.localizedDescription
-        let characteristics = service.characteristics
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            if let errorDesc = errorDesc {
-                self.logger.error("Error discovering characteristics: \(errorDesc, privacy: .public)")
+    nonisolated func peripheral(_ peripheral: CBPeripheral,
+                                didDiscoverCharacteristicsFor service: CBService,
+                                error: Error?) {
+        let pBox = UncheckedSendableBox(peripheral)
+        let sBox = UncheckedSendableBox(service)
+        let errBox = UncheckedSendableBox(error)
+        MainActor.assumeIsolated {
+            let p = pBox.value
+            let s = sBox.value
+            if let error = errBox.value {
+                self.logger.error("Error discovering characteristics: \(error.localizedDescription, privacy: .public)")
                 return
             }
-            guard let characteristics = characteristics else {
+            guard let characteristics = s.characteristics else {
                 self.logger.warning("No characteristics found")
                 return
             }
@@ -249,7 +252,7 @@ final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
                 case LYWSD02UUID.Characteristic.Battery.cbuuid:
                     self.hasBatterySupport = true
                 case LYWSD02UUID.Characteristic.SensorData.cbuuid:
-                    peripheral.setNotifyValue(true, for: characteristic)
+                    p.setNotifyValue(true, for: characteristic)
                     self.hasTemperatureSupport = true
                     self.hasHumiditySupport = true
                 case LYWSD02UUID.Characteristic.History.cbuuid,
@@ -264,21 +267,22 @@ final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
         }
     }
 
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        let errorDesc = error?.localizedDescription
-        let data = characteristic.value
-        let uuid = characteristic.uuid
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            if let errorDesc = errorDesc {
-                self.logger.error("Error updating value: \(errorDesc, privacy: .public)")
+    nonisolated func peripheral(_ peripheral: CBPeripheral,
+                                didUpdateValueFor characteristic: CBCharacteristic,
+                                error: Error?) {
+        let cBox = UncheckedSendableBox(characteristic)
+        let errBox = UncheckedSendableBox(error)
+        MainActor.assumeIsolated {
+            let c = cBox.value
+            if let error = errBox.value {
+                self.logger.error("Error updating value: \(error.localizedDescription, privacy: .public)")
                 return
             }
-            guard let data = data else {
+            guard let data = c.value else {
                 self.logger.warning("No data received for characteristic")
                 return
             }
-            self.handleCharacteristicUpdate(uuid: uuid, data: data)
+            self.handleCharacteristicUpdate(uuid: c.uuid, data: data)
         }
     }
 
@@ -302,7 +306,6 @@ final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
     // MARK: - Parsers
 
     private func parseTime(data: Data) {
-        // Some firmwares return 5 bytes (timestamp + tz offset), others only 4.
         let format: String
         switch data.count {
         case LYWSD02Constants.timeDataSize: format = "<Ib"
@@ -390,7 +393,6 @@ final class BLEDeviceModel: NSObject, ObservableObject, CBPeripheralDelegate {
                 return
             }
 
-            // Dedupe by device-provided index.
             guard !historyIDs.contains(idx) else { return }
             historyIDs.insert(idx)
 

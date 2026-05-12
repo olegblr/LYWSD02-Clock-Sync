@@ -7,6 +7,14 @@
 
 import Foundation
 
+/// A wrapper that opts out of Sendable checking for its payload.
+/// Use ONLY when the caller can guarantee serialized access (e.g. Core
+/// Bluetooth delegate callbacks delivered on the main queue).
+struct UncheckedSendableBox<T>: @unchecked Sendable {
+    let value: T
+    init(_ value: T) { self.value = value }
+}
+
 enum BLEError: LocalizedError {
     case bluetoothPoweredOff
     case bluetoothUnauthorized
