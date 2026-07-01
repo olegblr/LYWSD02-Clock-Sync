@@ -1,8 +1,10 @@
 # LYWSD02 Clock Sync
 
 ![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20macOS-lightgrey)
-![Swift](https://img.shields.io/badge/Swift-5.9-orange)
+![Swift](https://img.shields.io/badge/Swift-5.9%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
+
+> **🍴 Fork notice:** This project is a fork of [rkerkhof/LYWSD02-Clock-Sync](https://github.com/rkerkhof/LYWSD02-Clock-Sync) originally created by **Rick Kerkhof**. Significant improvements have been made including Swift 6 strict concurrency support, connection timeouts, reconnection logic, history charts, and bug fixes. Original MIT license is preserved.
 
 A native iOS and macOS application for synchronizing time and reading sensor data from **LYWSD02 Bluetooth temperature and humidity sensors** manufactured by Xiaomi.
 
@@ -267,27 +269,20 @@ xcodebuild test -scheme "LYWSD02 Clock Sync (iOS)" -destination 'platform=iOS Si
 
 | Issue | Severity | Workaround |
 |-------|----------|------------|
-| No connection timeout | Medium | Restart app if connection hangs |
-| History fetch can be slow | Low | Wait for completion indicator |
+| History fetch can be slow on large datasets | Low | Wait for completion indicator |
 | No background sync | Low | Keep app in foreground |
-| Limited error messages | Low | Check system logs for details |
-
-See [CODE_REVIEW_REPORT.md](./CODE_REVIEW_REPORT.md) for comprehensive issue list.
 
 ---
 
 ## 🗺️ Roadmap
 
 ### Version 1.1 (Next)
-- [ ] Connection timeout implementation
-- [ ] Comprehensive error handling
 - [ ] Unit test coverage (>70%)
 - [ ] Background mode support
-- [ ] Improved error messages
-
-### Version 1.2
 - [ ] Multiple device support
 - [ ] Export history to CSV
+
+### Version 1.2
 - [ ] Custom alerts (temperature thresholds)
 - [ ] Widgets (iOS/macOS)
 - [ ] Siri shortcuts
@@ -303,15 +298,13 @@ See [CODE_REVIEW_REPORT.md](./CODE_REVIEW_REPORT.md) for comprehensive issue lis
 ## 📚 Documentation
 
 ### For Users
-- [Quick Start Guide](./docs/QUICK_START.md) *(coming soon)*
-- [FAQ](./docs/FAQ.md) *(coming soon)*
-- [Troubleshooting](./docs/TROUBLESHOOTING.md) *(coming soon)*
+- [Quick Start Guide](./QUICK_START.md) *(coming soon)*
 
 ### For Developers
-- **[Code Review Report](./CODE_REVIEW_REPORT.md)** - Comprehensive external audit
-- **[API Documentation](./docs/API.md)** - Public API reference *(coming soon)*
-- **[Architecture Guide](./docs/ARCHITECTURE.md)** - System design details *(coming soon)*
-- **[Contributing Guide](./CONTRIBUTING.md)** - How to contribute *(coming soon)*
+- **[API Documentation](./API_DOCUMENTATION.md)** - Public API reference
+- **[Architecture Guide](./ARCHITECTURE.md)** - System design details
+- **[Contributing Guide](./CONTRIBUTING.md)** - How to contribute
+- **[Changelog](./CHANGELOG.md)** - Version history
 
 ### External Resources
 - [LYWSD02 Python Library](https://github.com/h4/lywsd02) - Original reverse engineering
@@ -358,8 +351,8 @@ in the Software without restriction...
 
 ## 🙏 Acknowledgments
 
-- **Rick Kerkhof** - Original creator
-- **[h4/lywsd02](https://github.com/h4/lywsd02)** - Python library that reverse-engineered the LYWSD02 protocol
+- **[Rick Kerkhof](https://github.com/rkerkhof)** — Original creator of [rkerkhof/LYWSD02-Clock-Sync](https://github.com/rkerkhof/LYWSD02-Clock-Sync), on which this fork is based
+- **[h4/lywsd02](https://github.com/h4/lywsd02)** - Python library that reverse-engineered the LYWSD02 Bluetooth protocol
 - **Xiaomi** - For creating the LYWSD02 sensor
 - **Community contributors** - For bug reports and improvements
 
@@ -369,10 +362,9 @@ in the Software without restriction...
 
 ### Getting Help
 
-- 📖 Check the [documentation](./docs/)
+- 📖 Check the [documentation](./ARCHITECTURE.md)
 - 🐛 Report bugs via [GitHub Issues](https://github.com/yourusername/LYWSD02-Clock-Sync/issues)
 - 💬 Ask questions in [Discussions](https://github.com/yourusername/LYWSD02-Clock-Sync/discussions)
-- 📧 Email: support@example.com *(update with real contact)*
 
 ### Reporting Bugs
 
@@ -392,9 +384,7 @@ When reporting bugs, please include:
 
 **DO NOT** create public GitHub issues for security vulnerabilities.
 
-Instead, email security concerns to: **security@example.com** *(update with real contact)*
-
-We will respond within 48 hours.
+Instead, open a private [GitHub Security Advisory](https://github.com/yourusername/LYWSD02-Clock-Sync/security/advisories/new) in this repository.
 
 ### Security Best Practices
 
