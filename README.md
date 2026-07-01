@@ -353,6 +353,7 @@ in the Software without restriction...
 
 - **[Rick Kerkhof](https://github.com/rkerkhof)** — Original creator of [rkerkhof/LYWSD02-Clock-Sync](https://github.com/rkerkhof/LYWSD02-Clock-Sync), on which this fork is based
 - **[h4/lywsd02](https://github.com/h4/lywsd02)** - Python library that reverse-engineered the LYWSD02 Bluetooth protocol
+- **[Nicolas Seriot / BinUtils](https://github.com/nst/BinUtils)** - Python `struct`-like binary packing utility used in `BinUtils.swift` (MIT License)
 - **Xiaomi** - For creating the LYWSD02 sensor
 - **Community contributors** - For bug reports and improvements
 

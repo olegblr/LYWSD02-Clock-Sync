@@ -11,7 +11,6 @@ enum LYWSD02Constants {
     // MARK: - Timing
     static let autoSyncDelay: TimeInterval = 0.2
     static let connectionTimeout: TimeInterval = 10.0
-    static let scanTimeout: TimeInterval = 30.0
     static let reconnectionDelays: [TimeInterval] = [1.0, 2.0, 4.0]
     /// UI refresh / re-sync cadence in seconds.
     static let uiRefreshInterval: TimeInterval = 60.0
@@ -20,7 +19,6 @@ enum LYWSD02Constants {
     static let timeDataSize = 5  // 4 bytes timestamp + 1 byte offset
     static let timeDataSizeShort = 4 // some firmwares return only timestamp
     static let sensorDataSize = 3  // 2 bytes temp + 1 byte humidity
-    static let batteryDataSize = 1
     static let historyRecordSize = 14
     static let numRecordsDataSize = 8
 
@@ -41,7 +39,6 @@ enum LYWSD02Constants {
     // MARK: - Limits
     static let maxHistoryRecords = 5_000
     static let maxReconnectionAttempts = 3
-    static let historyPageSize = 100
     /// Drop discovered peripherals from the cache that haven't been seen for this many seconds.
     static let staleDeviceTimeout: TimeInterval = 60.0
 }

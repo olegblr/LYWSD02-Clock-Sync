@@ -5,9 +5,17 @@
 //  Created by Nicolas Seriot on 12/03/16.
 //  Copyright © 2016 Nicolas Seriot. All rights reserved.
 //
+//  Adapted from the open-source BinUtils project:
+//  https://github.com/nst/BinUtils (MIT License).
+//  Modified for this project: added bounds checking, throwing errors,
+//  and unified os.Logger logging.
+//
 
 import Foundation
 import CoreFoundation
+import os.log
+
+private let binUtilsLogger = Logger(subsystem: "com.lywsd02.clocksync", category: "BinUtils")
 
 // MARK: protocol UnpackedType
 
@@ -58,8 +66,12 @@ extension Float64 : DataConvertible { }
 // MARK: String extension
 
 extension String {
-    subscript (from:Int, to:Int) -> String {
-        return NSString(string: self).substring(with: NSMakeRange(from, to-from))
+    /// Safe substring by integer offsets. Returns `nil` if the range is out of bounds.
+    subscript (safe from: Int, to: Int) -> String? {
+        guard from >= 0, to <= count, from <= to else { return nil }
+        let start = index(startIndex, offsetBy: from)
+        let end = index(startIndex, offsetBy: to)
+        return String(self[start..<end])
     }
 }
 
@@ -84,21 +96,29 @@ public func unhexlify(_ string:String) -> Data? {
     // https://docs.python.org/2/library/binascii.html
     
     let s = string.uppercased().replacingOccurrences(of: " ", with: "")
-    
-    let nonHexCharacterSet = CharacterSet(charactersIn: "0123456789ABCDEF").inverted
-    if let range = s.rangeOfCharacter(from: nonHexCharacterSet) {
-        print("-- found non hex character at range \(range)")
+
+    // A valid hex string must have an even number of characters.
+    guard s.count % 2 == 0 else {
+        binUtilsLogger.error("unhexlify: odd-length hex string (\(s.count, privacy: .public) chars)")
         return nil
     }
-    
+
+    let nonHexCharacterSet = CharacterSet(charactersIn: "0123456789ABCDEF").inverted
+    if let range = s.rangeOfCharacter(from: nonHexCharacterSet) {
+        binUtilsLogger.error("unhexlify: found non-hex character at range \(String(describing: range), privacy: .public)")
+        return nil
+    }
+
     var data = Data(capacity: s.count / 2)
-    
-    for i in stride(from: 0, to:s.count, by:2) {
-        let byteString = s[i, i+2]
+
+    for i in stride(from: 0, to: s.count, by: 2) {
+        guard let byteString = s[safe: i, i + 2] else {
+            return nil
+        }
         let byte = UInt8(byteString.withCString { strtoul($0, nil, 16) })
         data.append([byte] as [UInt8], count: 1)
     }
-    
+
     return data
 }
 
@@ -210,7 +230,7 @@ func formatDoesMatchDataLength(_ format:String, data:Data) -> Bool {
     let sizeAccordingToFormat = numberOfBytesInFormat(format)
     let dataLength = data.count
     if sizeAccordingToFormat != dataLength {
-        print("format \"\(format)\" expects \(sizeAccordingToFormat) bytes but data is \(dataLength) bytes")
+        binUtilsLogger.error("format \"\(format, privacy: .public)\" expects \(sizeAccordingToFormat, privacy: .public) bytes but data is \(dataLength, privacy: .public) bytes")
         return false
     }
     
