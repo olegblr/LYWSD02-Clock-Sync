@@ -7,5 +7,9 @@
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Bluetooth is required to discover and synchronize time with your Xiaomi LYWSD02 thermometer-clock.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Bluetooth is required to communicate with your Xiaomi LYWSD02 thermometer-clock.</string>
 </dict>
 </plist>

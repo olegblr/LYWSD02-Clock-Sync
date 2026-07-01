@@ -3,442 +3,288 @@
 //  LYWSD02 Clock Sync
 //
 //  Created by Rick Kerkhof on 05/11/2021.
-//  Improved by AI Assistant on 17/11/2025
 //
 
 import CoreBluetooth
 import Foundation
 import os.log
 
-// MARK: - Custom Errors
-
-enum BLEError: LocalizedError {
-    case bluetoothNotReady
-    case connectionTimeout
-    case deviceNotFound
-    case unauthorized
-    
-    var errorDescription: String? {
-        switch self {
-        case .bluetoothNotReady:
-            return "Bluetooth is not ready"
-        case .connectionTimeout:
-            return "Connection timed out"
-        case .deviceNotFound:
-            return "Device not found"
-        case .unauthorized:
-            return "Bluetooth access not authorized"
-        }
-    }
-}
-
-// MARK: - BLEClient Protocol (для тестируемости)
-
+/// `CBCentralManager` is initialized with `queue: nil`, so all delegate
+/// callbacks arrive on the main thread. We bridge non-`Sendable`
+/// CoreBluetooth values across the actor boundary using
+/// `UncheckedSendableBox` and then enter `MainActor` via
+/// `assumeIsolated`. This avoids unnecessary `Task` hops while staying
+/// compatible with Swift 6 strict concurrency.
 @MainActor
-protocol BLEClientProtocol: AnyObject {
-    var discoveredPeripherals: [BLEDeviceModel] { get }
-    var scanning: Bool { get }
-    var bluetoothState: CBManagerState { get }
-    var errorMessage: String? { get }
-    
-    func triggerScan(timeout: TimeInterval)
-    func stopScan()
-    func connect(to model: BLEDeviceModel, timeout: TimeInterval)
-    func disconnect(_ model: BLEDeviceModel)
-}
+final class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate {
+    @Published public private(set) var discoveredPeripherals: [BLEDeviceModel] = []
+    @Published private(set) var scanning: Bool = false
+    @Published private(set) var bluetoothState: CBManagerState = .unknown
+    @Published var lastError: BLEError?
 
-// MARK: - Enhanced BLEClient
-
-@MainActor
-final class BLEClient: NSObject, ObservableObject, CBCentralManagerDelegate, BLEClientProtocol {
-    
-    // MARK: - Published Properties
-    
-    @Published public var discoveredPeripherals: [BLEDeviceModel] = []
-    @Published var scanning: Bool = false
-    @Published var bluetoothState: CBManagerState = .unknown
-    @Published var errorMessage: String?
-    @Published var autoReconnectEnabled: Bool = true
-    
-    // MARK: - Private Properties
-    
     private var manager: CBCentralManager!
-    private let logger = Logger(subsystem: "com.lywsd02.clocksync", category: "BLE")
-    
-    // Device caching для предотвращения потери состояния
-    private var deviceCache: [UUID: BLEDeviceModel] = [:]
-    
-    // Connection management
+
+    private var peripheralCache: [UUID: BLEDeviceModel] = [:]
+    private var lastSeen: [UUID: Date] = [:]
+
     private var connectionTimeouts: [UUID: Task<Void, Never>] = [:]
     private var reconnectionAttempts: [UUID: Int] = [:]
-    private let maxReconnectionAttempts = 3
-    
-    // Scan management
-    private var scanTimeoutTask: Task<Void, Never>?
-    private let defaultScanTimeout: TimeInterval = 30.0
-    
-    // MARK: - Initialization
-    
+    private var intentionalDisconnects: Set<UUID> = []
+
+    private let logger = Logger(subsystem: "com.lywsd02.clocksync", category: "BLEClient")
+
     override required init() {
         super.init()
         self.manager = CBCentralManager(delegate: self, queue: nil)
     }
-    
-    deinit {
-        Task { @MainActor [weak self] in
-            self?.cleanup()
-        }
-    }
-    
-    // MARK: - Public Methods
-    
-    /// Начать сканирование устройств с таймаутом
-    func triggerScan(timeout: TimeInterval = 30.0) {
-        guard manager.state == .poweredOn else {
-            logger.warning("Cannot scan: Bluetooth not powered on (state: \(String(describing: self.manager.state)))")
-            errorMessage = bluetoothStateMessage(for: self.manager.state)
-            return
-        }
-        
-        logger.info("Starting scan with \(timeout)s timeout")
-        
-        // Не очищаем deviceCache, но обновляем discoveredPeripherals
-        discoveredPeripherals.removeAll()
-        
-        manager.scanForPeripherals(
-            withServices: LYWSD02UUID.serviceCBUUIDs,
-            options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
-        )
-        scanning = true
-        errorMessage = nil
-        
-        // Автоматическая остановка сканирования через timeout
-        scanTimeoutTask?.cancel()
-        scanTimeoutTask = Task { @MainActor in
-            do {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                
-                if self.scanning {
-                    self.stopScan()
-                    self.logger.info("Scan stopped automatically after \(timeout)s")
-                    
-                    if self.discoveredPeripherals.isEmpty {
-                        self.errorMessage = "No devices found. Make sure the device is nearby and powered on."
-                    }
-                }
-            } catch {
-                // Task was cancelled
-            }
-        }
-    }
-    
-    /// Остановить сканирование
-    func stopScan() {
-        scanTimeoutTask?.cancel()
-        scanTimeoutTask = nil
-        manager.stopScan()
-        scanning = false
-        logger.info("Stopped scanning for peripherals")
-    }
-    
-    /// Подключиться к устройству с таймаутом
-    func connect(to model: BLEDeviceModel, timeout: TimeInterval = 10.0) {
-        if model.peripheral.state == .connected {
-            logger.info("Already connected to \(model.name)")
-            return
-        }
-        
-        if model.peripheral.state == .connecting {
-            logger.info("Already connecting to \(model.name)")
-            return
-        }
-        
-        logger.info("Connecting to \(model.name) with \(timeout)s timeout")
-        manager.connect(model.peripheral, options: nil)
-        
-        // Запустить таймаут подключения
-        let peripheralID = model.peripheral.identifier
-        connectionTimeouts[peripheralID]?.cancel()
-        connectionTimeouts[peripheralID] = Task { @MainActor in
-            do {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                
-                if model.peripheral.state != .connected {
-                    logger.error("Connection timeout for \(model.name)")
-                    manager.cancelPeripheralConnection(model.peripheral)
-                    self.errorMessage = "Connection timeout: \(model.name)"
-                }
-            } catch {
-                // Task was cancelled - successful connection
-            }
-        }
-    }
-    
-    /// Отключиться от устройства
-    func disconnect(_ model: BLEDeviceModel) {
-        if model.peripheral.state == .disconnected {
-            logger.info("Already disconnected from \(model.name)")
-            return
-        }
-        
-        logger.info("Disconnecting from \(model.name)")
-        
-        // Отменить попытки переподключения
-        reconnectionAttempts.removeValue(forKey: model.peripheral.identifier)
-        
-        manager.cancelPeripheralConnection(model.peripheral)
-    }
-    
-    // MARK: - CBCentralManagerDelegate
-    
+
+    // MARK: - Central state
+
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        Task { @MainActor in
-            let oldState = self.bluetoothState
-            self.bluetoothState = central.state
-            
-            self.handleStateTransition(from: oldState, to: central.state)
+        let state = central.state
+        MainActor.assumeIsolated {
+            self.handleStateChange(state)
         }
-        
-        switch central.state {
-        case .unknown:
-            logger.info("Bluetooth state: unknown")
-        case .resetting:
-            logger.info("Bluetooth state: resetting")
-        case .unsupported:
-            logger.warning("Bluetooth state: unsupported")
-            Task { @MainActor in
-                self.errorMessage = "Bluetooth is not supported on this device"
-            }
-        case .unauthorized:
-            logger.warning("Bluetooth state: unauthorized")
-            Task { @MainActor in
-                self.errorMessage = "Bluetooth access is not authorized. Please enable it in Settings."
-            }
+    }
+
+    private func handleStateChange(_ state: CBManagerState) {
+        bluetoothState = state
+        logger.info("Central state changed: \(state.rawValue, privacy: .public)")
+
+        switch state {
         case .poweredOff:
-            logger.info("Bluetooth state: powered off")
-            Task { @MainActor in
-                self.stopScan()
-                self.errorMessage = "Bluetooth is powered off. Please turn it on."
-            }
+            lastError = .bluetoothPoweredOff
+            stopScan()
+        case .unauthorized:
+            lastError = .bluetoothUnauthorized
+            stopScan()
+        case .unsupported:
+            lastError = .bluetoothUnsupported
+            stopScan()
         case .poweredOn:
-            logger.info("Bluetooth state: powered on")
-            Task { @MainActor in
-                self.errorMessage = nil
-                // Автоматически запускать сканирование только если нет устройств
-                if self.discoveredPeripherals.isEmpty {
-                    self.triggerScan()
-                }
-            }
+            lastError = nil
+            triggerScan()
+        case .resetting, .unknown:
+            stopScan()
         @unknown default:
-            logger.warning("Bluetooth state: unknown default case")
-        }
-    }
-    
-    nonisolated func centralManager(
-        _ central: CBCentralManager,
-        didDiscover peripheral: CBPeripheral,
-        advertisementData: [String: Any],
-        rssi RSSI: NSNumber
-    ) {
-        Task { @MainActor in
-            logger.debug("Discovered peripheral: \(peripheral.identifier.uuidString) RSSI: \(RSSI.intValue)dBm")
-            
-            // Проверяем, есть ли устройство в кэше
-            let device: BLEDeviceModel
-            if let cachedDevice = deviceCache[peripheral.identifier] {
-                device = cachedDevice
-                logger.debug("Reusing cached device model for \(peripheral.name ?? "Unknown")")
-            } else {
-                // Создаём новое устройство и добавляем в кэш
-                device = BLEDeviceModel(peripheral)
-                deviceCache[peripheral.identifier] = device
-                logger.info("Created new device model: \(peripheral.name ?? "Unknown")")
-            }
-            
-            // Добавляем в список обнаруженных, если ещё нет
-            if !self.discoveredPeripherals.contains(where: { $0.peripheral.identifier == peripheral.identifier }) {
-                self.discoveredPeripherals.append(device)
-            }
-        }
-    }
-    
-    nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        Task { @MainActor in
-            // Отменяем таймаут подключения
-            self.connectionTimeouts[peripheral.identifier]?.cancel()
-            self.connectionTimeouts.removeValue(forKey: peripheral.identifier)
-            
-            // Сбрасываем счётчик попыток переподключения
-            self.reconnectionAttempts.removeValue(forKey: peripheral.identifier)
-            
-            logger.info("✅ Connected to peripheral: \(peripheral.name ?? "Unknown")")
-            peripheral.discoverServices(nil)
-        }
-    }
-    
-    nonisolated func centralManager(
-        _ central: CBCentralManager,
-        didFailToConnect peripheral: CBPeripheral,
-        error: Error?
-    ) {
-        Task { @MainActor in
-            // Отменяем таймаут
-            self.connectionTimeouts[peripheral.identifier]?.cancel()
-            self.connectionTimeouts.removeValue(forKey: peripheral.identifier)
-            
-            let errorMsg = error?.localizedDescription ?? "Unknown error"
-            logger.error("❌ Failed to connect to \(peripheral.name ?? "Unknown"): \(errorMsg)")
-            self.errorMessage = "Failed to connect: \(errorMsg)"
-        }
-    }
-    
-    nonisolated func centralManager(
-        _ central: CBCentralManager,
-        didDisconnectPeripheral peripheral: CBPeripheral,
-        error: Error?
-    ) {
-        Task { @MainActor in
-            // Отменяем таймаут
-            self.connectionTimeouts[peripheral.identifier]?.cancel()
-            self.connectionTimeouts.removeValue(forKey: peripheral.identifier)
-            
-            if let error = error {
-                logger.error("⚠️ Disconnected with error: \(error.localizedDescription)")
-                
-                // Автоматическое переподключение при ошибке
-                if self.autoReconnectEnabled {
-                    await self.attemptReconnection(to: peripheral)
-                }
-            } else {
-                logger.info("Disconnected from peripheral: \(peripheral.name ?? "Unknown")")
-                self.reconnectionAttempts.removeValue(forKey: peripheral.identifier)
-            }
-        }
-    }
-    
-    // MARK: - Private Methods
-    
-    private func handleStateTransition(from oldState: CBManagerState, to newState: CBManagerState) {
-        switch (oldState, newState) {
-        case (.poweredOn, .poweredOff):
-            logger.warning("Bluetooth was turned off - all connections will be lost")
-            // Очищаем состояние подключений
-            connectionTimeouts.values.forEach { $0.cancel() }
-            connectionTimeouts.removeAll()
-            reconnectionAttempts.removeAll()
-            
-        case (.poweredOff, .poweredOn):
-            logger.info("Bluetooth was turned on - ready for operations")
-            
-        case (_, .unauthorized):
-            logger.error("Bluetooth authorization was revoked")
-            stopScan()
-            
-        case (_, .unsupported):
-            logger.error("Bluetooth is not supported on this device")
-            stopScan()
-            
-        default:
             break
         }
     }
-    
-    private func attemptReconnection(to peripheral: CBPeripheral) async {
-        let attempts = reconnectionAttempts[peripheral.identifier] ?? 0
-        
-        guard attempts < self.maxReconnectionAttempts else {
-            logger.error("Maximum reconnection attempts reached for \(peripheral.name ?? "Unknown")")
-            errorMessage = "Failed to reconnect after \(self.maxReconnectionAttempts) attempts"
-            reconnectionAttempts.removeValue(forKey: peripheral.identifier)
+
+    // MARK: - Scanning
+
+    func triggerScan() {
+        guard manager.state == .poweredOn else { return }
+        manager.scanForPeripherals(withServices: LYWSD02UUID.serviceCBUUIDs, options: nil)
+        scanning = true
+        logger.info("Scanning started")
+        scheduleStaleCleanup()
+    }
+
+    func stopScan() {
+        guard scanning else { return }
+        manager.stopScan()
+        scanning = false
+        logger.info("Scanning stopped")
+    }
+
+    private var staleCleanupTask: Task<Void, Never>?
+    private func scheduleStaleCleanup() {
+        staleCleanupTask?.cancel()
+        staleCleanupTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(LYWSD02Constants.staleDeviceTimeout * 1_000_000_000))
+                guard let self = self else { return }
+                await MainActor.run { self.purgeStaleDevices() }
+            }
+        }
+    }
+
+    private func purgeStaleDevices() {
+        let cutoff = Date().addingTimeInterval(-LYWSD02Constants.staleDeviceTimeout)
+        let stale = lastSeen.filter { $0.value < cutoff }.map(\.key)
+        for id in stale {
+            if let model = peripheralCache[id],
+               model.peripheral.state == .connected || model.peripheral.state == .connecting {
+                continue
+            }
+            discoveredPeripherals.removeAll { $0.peripheral.identifier == id }
+            peripheralCache.removeValue(forKey: id)
+            lastSeen.removeValue(forKey: id)
+        }
+    }
+
+    // MARK: - Connect / Disconnect
+
+    func connect(to model: BLEDeviceModel) {
+        let id = model.peripheral.identifier
+        intentionalDisconnects.remove(id)
+
+        switch model.peripheral.state {
+        case .connected, .connecting:
+            return
+        default:
+            break
+        }
+
+        manager.connect(model.peripheral, options: nil)
+        model.updateConnectionState(.connecting)
+        startConnectionTimeout(for: model)
+        logger.info("Connecting to \(model.name, privacy: .public)")
+    }
+
+    func disconnect(_ model: BLEDeviceModel) {
+        let id = model.peripheral.identifier
+        intentionalDisconnects.insert(id)
+
+        connectionTimeouts[id]?.cancel()
+        connectionTimeouts.removeValue(forKey: id)
+        reconnectionAttempts.removeValue(forKey: id)
+
+        guard model.peripheral.state != .disconnected else {
+            model.updateConnectionState(.disconnected)
             return
         }
-        
-        reconnectionAttempts[peripheral.identifier] = attempts + 1
-        
-        // Экспоненциальная задержка: 1s, 2s, 4s
-        let delay = TimeInterval(1 << attempts)
-        logger.info("🔄 Auto-reconnection attempt \(attempts + 1)/\(self.maxReconnectionAttempts) in \(delay)s")
-        
-        do {
-            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            
-            if let device = deviceCache[peripheral.identifier] {
-                connect(to: device)
+
+        manager.cancelPeripheralConnection(model.peripheral)
+        logger.info("Disconnecting from \(model.name, privacy: .public)")
+    }
+
+    private func startConnectionTimeout(for model: BLEDeviceModel) {
+        let id = model.peripheral.identifier
+        connectionTimeouts[id]?.cancel()
+        connectionTimeouts[id] = Task { [weak self, weak model] in
+            try? await Task.sleep(nanoseconds: UInt64(LYWSD02Constants.connectionTimeout * 1_000_000_000))
+            guard !Task.isCancelled,
+                  let self = self,
+                  let model = model else { return }
+            if model.peripheral.state != .connected {
+                self.logger.error("Connection timeout for \(model.name, privacy: .public)")
+                self.lastError = .connectionTimeout
+                self.manager.cancelPeripheralConnection(model.peripheral)
             }
-        } catch {
-            // Task was cancelled
-            logger.debug("Reconnection cancelled")
+            self.connectionTimeouts.removeValue(forKey: id)
         }
     }
-    
-    private func bluetoothStateMessage(for state: CBManagerState) -> String {
-        switch state {
-        case .poweredOff:
-            return "Bluetooth is powered off. Please turn it on."
-        case .unauthorized:
-            return "Bluetooth access is not authorized. Please enable it in Settings."
-        case .unsupported:
-            return "Bluetooth is not supported on this device"
-        case .resetting:
-            return "Bluetooth is resetting..."
-        case .unknown:
-            return "Bluetooth state is unknown"
-        default:
-            return ""
+
+    // MARK: - Discovery
+
+    nonisolated func centralManager(_ central: CBCentralManager,
+                                    didDiscover peripheral: CBPeripheral,
+                                    advertisementData: [String: Any],
+                                    rssi RSSI: NSNumber) {
+        let box = UncheckedSendableBox(peripheral)
+        MainActor.assumeIsolated {
+            self.handleDiscovered(peripheral: box.value)
         }
     }
-    
-    private func cleanup() {
-        logger.info("Cleaning up BLEClient resources")
-        
-        // Остановить сканирование
-        if scanning {
-            manager.stopScan()
+
+    private func handleDiscovered(peripheral: CBPeripheral) {
+        let id = peripheral.identifier
+        lastSeen[id] = Date()
+
+        let model: BLEDeviceModel
+        if let cached = peripheralCache[id] {
+            model = cached
+        } else {
+            model = BLEDeviceModel(peripheral)
+            peripheralCache[id] = model
+            logger.info("Discovered new device: \(peripheral.name ?? "Unknown", privacy: .private(mask: .hash))")
         }
-        
-        // Отключить все устройства
-        for device in discoveredPeripherals {
-            if device.peripheral.state == .connected || device.peripheral.state == .connecting {
-                manager.cancelPeripheralConnection(device.peripheral)
+
+        if !discoveredPeripherals.contains(where: { $0.peripheral.identifier == id }) {
+            discoveredPeripherals.append(model)
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        let box = UncheckedSendableBox(peripheral)
+        MainActor.assumeIsolated {
+            let p = box.value
+            let id = p.identifier
+            self.connectionTimeouts[id]?.cancel()
+            self.connectionTimeouts.removeValue(forKey: id)
+            self.reconnectionAttempts.removeValue(forKey: id)
+
+            if let model = self.peripheralCache[id] {
+                model.updateConnectionState(.connected)
+            }
+            self.logger.info("Connected to \(p.name ?? "Unknown", privacy: .private(mask: .hash))")
+            p.discoverServices([LYWSD02UUID.Service.Data.cbuuid])
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager,
+                                    didDisconnectPeripheral peripheral: CBPeripheral,
+                                    error: Error?) {
+        let box = UncheckedSendableBox(peripheral)
+        let errBox = UncheckedSendableBox(error)
+        MainActor.assumeIsolated {
+            self.handleDisconnected(peripheral: box.value, error: errBox.value)
+        }
+    }
+
+    private func handleDisconnected(peripheral: CBPeripheral, error: Error?) {
+        let id = peripheral.identifier
+        logger.warning("Disconnected from \(peripheral.name ?? "Unknown", privacy: .private(mask: .hash))")
+        if let error = error {
+            logger.error("Disconnect error: \(error.localizedDescription, privacy: .public)")
+        }
+
+        if let model = peripheralCache[id] {
+            model.updateConnectionState(.disconnected)
+            model.handleDisconnection()
+        }
+
+        if intentionalDisconnects.contains(id) {
+            intentionalDisconnects.remove(id)
+            reconnectionAttempts.removeValue(forKey: id)
+            return
+        }
+
+        let attempts = reconnectionAttempts[id, default: 0]
+        guard attempts < LYWSD02Constants.maxReconnectionAttempts else {
+            logger.error("Max reconnection attempts reached")
+            reconnectionAttempts.removeValue(forKey: id)
+            return
+        }
+        reconnectionAttempts[id] = attempts + 1
+
+        let delay = LYWSD02Constants.reconnectionDelays[
+            min(attempts, LYWSD02Constants.reconnectionDelays.count - 1)
+        ]
+        logger.info("Will reconnect in \(delay, privacy: .public)s (attempt \(attempts + 1, privacy: .public))")
+
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard let self = self else { return }
+            await MainActor.run {
+                if let model = self.peripheralCache[id], !self.intentionalDisconnects.contains(id) {
+                    self.connect(to: model)
+                }
             }
         }
-        
-        // Отменить все таймауты
-        scanTimeoutTask?.cancel()
-        connectionTimeouts.values.forEach { $0.cancel() }
-        connectionTimeouts.removeAll()
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager,
+                                    didFailToConnect peripheral: CBPeripheral,
+                                    error: Error?) {
+        let box = UncheckedSendableBox(peripheral)
+        let errBox = UncheckedSendableBox(error)
+        MainActor.assumeIsolated {
+            let id = box.value.identifier
+            self.connectionTimeouts[id]?.cancel()
+            self.connectionTimeouts.removeValue(forKey: id)
+            if let model = self.peripheralCache[id] {
+                model.updateConnectionState(.disconnected)
+            }
+            self.lastError = errBox.value.map { .connectionFailed($0) } ?? .connectionTimeout
+            self.logger.error("Failed to connect: \(errBox.value?.localizedDescription ?? "Unknown error", privacy: .public)")
+        }
+    }
+
+    deinit {
+        staleCleanupTask?.cancel()
+        for task in connectionTimeouts.values { task.cancel() }
     }
 }
-
-// MARK: - Mock для тестирования
-
-#if DEBUG
-@MainActor
-final class MockBLEClient: BLEClientProtocol {
-    var discoveredPeripherals: [BLEDeviceModel] = []
-    var scanning: Bool = false
-    var bluetoothState: CBManagerState = .poweredOn
-    var errorMessage: String?
-    
-    var scanCalled = false
-    var connectCalled = false
-    var disconnectCalled = false
-    
-    func triggerScan(timeout: TimeInterval = 30.0) {
-        scanCalled = true
-        scanning = true
-    }
-    
-    func stopScan() {
-        scanning = false
-    }
-    
-    func connect(to model: BLEDeviceModel, timeout: TimeInterval = 10.0) {
-        connectCalled = true
-    }
-    
-    func disconnect(_ model: BLEDeviceModel) {
-        disconnectCalled = true
-    }
-}
-#endif

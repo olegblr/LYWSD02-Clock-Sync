@@ -5,9 +5,17 @@
 //  Created by Nicolas Seriot on 12/03/16.
 //  Copyright © 2016 Nicolas Seriot. All rights reserved.
 //
+//  Adapted from the open-source BinUtils project:
+//  https://github.com/nst/BinUtils (MIT License).
+//  Modified for this project: added bounds checking, throwing errors,
+//  and unified os.Logger logging.
+//
 
 import Foundation
 import CoreFoundation
+import os.log
+
+private let binUtilsLogger = Logger(subsystem: "com.lywsd02.clocksync", category: "BinUtils")
 
 // MARK: protocol UnpackedType
 
@@ -58,8 +66,12 @@ extension Float64 : DataConvertible { }
 // MARK: String extension
 
 extension String {
-    subscript (from:Int, to:Int) -> String {
-        return NSString(string: self).substring(with: NSMakeRange(from, to-from))
+    /// Safe substring by integer offsets. Returns `nil` if the range is out of bounds.
+    subscript (safe from: Int, to: Int) -> String? {
+        guard from >= 0, to <= count, from <= to else { return nil }
+        let start = index(startIndex, offsetBy: from)
+        let end = index(startIndex, offsetBy: to)
+        return String(self[start..<end])
     }
 }
 
@@ -73,20 +85,9 @@ extension Data {
 
 // MARK: functions
 
-public func hexlify(_ data:Data) -> String {
-    
+public func hexlify(_ data: Data) -> String {
     // similar to hexlify() in Python's binascii module
-    // https://docs.python.org/2/library/binascii.html
-    
-    var s = String()
-    var byte: UInt8 = 0
-    
-    for i in 0 ..< data.count {
-        NSData(data: data).getBytes(&byte, range: NSMakeRange(i, 1))
-        s = s.appendingFormat("%02x", byte)
-    }
-    
-    return s as String
+    return data.map { String(format: "%02x", $0) }.joined()
 }
 
 public func unhexlify(_ string:String) -> Data? {
@@ -95,54 +96,83 @@ public func unhexlify(_ string:String) -> Data? {
     // https://docs.python.org/2/library/binascii.html
     
     let s = string.uppercased().replacingOccurrences(of: " ", with: "")
-    
-    let nonHexCharacterSet = CharacterSet(charactersIn: "0123456789ABCDEF").inverted
-    if let range = s.rangeOfCharacter(from: nonHexCharacterSet) {
-        print("-- found non hex character at range \(range)")
+
+    // A valid hex string must have an even number of characters.
+    guard s.count % 2 == 0 else {
+        binUtilsLogger.error("unhexlify: odd-length hex string (\(s.count, privacy: .public) chars)")
         return nil
     }
-    
+
+    let nonHexCharacterSet = CharacterSet(charactersIn: "0123456789ABCDEF").inverted
+    if let range = s.rangeOfCharacter(from: nonHexCharacterSet) {
+        binUtilsLogger.error("unhexlify: found non-hex character at range \(String(describing: range), privacy: .public)")
+        return nil
+    }
+
     var data = Data(capacity: s.count / 2)
-    
-    for i in stride(from: 0, to:s.count, by:2) {
-        let byteString = s[i, i+2]
+
+    for i in stride(from: 0, to: s.count, by: 2) {
+        guard let byteString = s[safe: i, i + 2] else {
+            return nil
+        }
         let byte = UInt8(byteString.withCString { strtoul($0, nil, 16) })
         data.append([byte] as [UInt8], count: 1)
     }
-    
+
     return data
 }
 
-func readIntegerType<T:DataConvertible>(_ type:T.Type, bytes:[UInt8], loc:inout Int) -> T {
+func readIntegerType<T:DataConvertible>(_ type:T.Type, bytes:[UInt8], loc:inout Int) throws -> T {
     let size = MemoryLayout<T>.size
+    
+    // Bounds checking to prevent crash
+    guard loc + size <= bytes.count else {
+        throw BinUtilsError.dataOutOfBounds(expected: loc + size, actual: bytes.count)
+    }
+    
     let sub = Array(bytes[loc..<(loc+size)])
     loc += size
-    return T(bytes: sub)!
+    
+    guard let result = T(bytes: sub) else {
+        throw BinUtilsError.invalidDataSize(expected: size, actual: sub.count)
+    }
+    
+    return result
 }
 
-func readFloatingPointType<T:DataConvertible>(_ type:T.Type, bytes:[UInt8], loc:inout Int, isBigEndian:Bool) -> T {
+func readFloatingPointType<T:DataConvertible>(_ type:T.Type, bytes:[UInt8], loc:inout Int, isBigEndian:Bool) throws -> T {
     let size = MemoryLayout<T>.size
+    
+    // Bounds checking to prevent crash
+    guard loc + size <= bytes.count else {
+        throw BinUtilsError.dataOutOfBounds(expected: loc + size, actual: bytes.count)
+    }
+    
     let sub = Array(bytes[loc..<(loc+size)])
     loc += size
     let sub_ = isBigEndian ? sub.reversed() : sub
-    return T(bytes: sub_)!
+    
+    guard let result = T(bytes: sub_) else {
+        throw BinUtilsError.invalidDataSize(expected: size, actual: sub_.count)
+    }
+    
+    return result
 }
 
-func isBigEndianFromMandatoryByteOrderFirstCharacter(_ format:String) -> Bool {
-    
-    guard let firstChar = format.first else { assertionFailure("empty format"); return false }
-    
-    let s = NSString(string: String(firstChar))
-    let c = s.substring(to: 1)
-    
-    if c == "@" { assertionFailure("native size and alignment is unsupported") }
-    
-    if c == "=" || c == "<" { return false }
-    if c == ">" || c == "!" { return true }
-    
-    assertionFailure("format '\(format)' first character must be among '=<>!'")
-    
-    return false
+func isBigEndianFromMandatoryByteOrderFirstCharacter(_ format: String) throws -> Bool {
+    guard let firstChar = format.first else {
+        throw BinUtilsError.invalidArgument(reason: "empty format")
+    }
+    switch firstChar {
+    case "@":
+        throw BinUtilsError.invalidArgument(reason: "native size and alignment '@' is unsupported")
+    case "=", "<":
+        return false
+    case ">", "!":
+        return true
+    default:
+        throw BinUtilsError.invalidArgument(reason: "format '\(format)' first character must be among '=<>!'")
+    }
 }
 
 // akin to struct.calcsize(fmt)
@@ -200,7 +230,7 @@ func formatDoesMatchDataLength(_ format:String, data:Data) -> Bool {
     let sizeAccordingToFormat = numberOfBytesInFormat(format)
     let dataLength = data.count
     if sizeAccordingToFormat != dataLength {
-        print("format \"\(format)\" expects \(sizeAccordingToFormat) bytes but data is \(dataLength) bytes")
+        binUtilsLogger.error("format \"\(format, privacy: .public)\" expects \(sizeAccordingToFormat, privacy: .public) bytes but data is \(dataLength, privacy: .public) bytes")
         return false
     }
     
@@ -218,119 +248,140 @@ func formatDoesMatchDataLength(_ format:String, data:Data) -> Bool {
 public enum BinUtilsError: Error {
     case formatDoesMatchDataLength(format:String, dataSize:Int)
     case unsupportedFormat(character:Character)
+    case dataOutOfBounds(expected:Int, actual:Int)
+    case invalidDataSize(expected:Int, actual:Int)
+    case invalidArgument(reason: String)
 }
 
-public func pack(_ format:String, _ objects:[Any], _ stringEncoding:String.Encoding=String.Encoding.windowsCP1252) -> Data {
-    
+public func pack(_ format: String, _ objects: [Any], _ stringEncoding: String.Encoding = .windowsCP1252) throws -> Data {
+
     var objectsQueue = objects
-    
     var mutableFormat = format
-    
     var mutableData = Data()
-    
     var isBigEndian = false
-    
-    let firstCharacter = mutableFormat.remove(at: mutableFormat.startIndex)
-    
-    switch(firstCharacter) {
+
+    guard let firstCharacter = mutableFormat.first else {
+        throw BinUtilsError.invalidArgument(reason: "empty format")
+    }
+    mutableFormat.removeFirst()
+
+    switch firstCharacter {
     case "<", "=":
         isBigEndian = false
     case ">", "!":
         isBigEndian = true
     case "@":
-        assertionFailure("native size and alignment '@' is unsupported'")
+        throw BinUtilsError.invalidArgument(reason: "native size and alignment '@' is unsupported")
     default:
-        assertionFailure("unsupported format chacracter'")
+        throw BinUtilsError.invalidArgument(reason: "unsupported format character '\(firstCharacter)'")
     }
-    
+
+    func castInt(_ value: Any) throws -> Int {
+        if let v = value as? Int { return v }
+        if let v = value as? Int32 { return Int(v) }
+        if let v = value as? UInt32 { return Int(v) }
+        if let v = value as? Int64 { return Int(v) }
+        throw BinUtilsError.invalidArgument(reason: "expected Int, got \(type(of: value))")
+    }
+
+    func castDouble(_ value: Any) throws -> Double {
+        if let v = value as? Double { return v }
+        if let v = value as? Float { return Double(v) }
+        if let v = value as? Int { return Double(v) }
+        throw BinUtilsError.invalidArgument(reason: "expected Double, got \(type(of: value))")
+    }
+
     var n = 0 // repeat counter
-    
+
     while !mutableFormat.isEmpty {
-        
+
         let c = mutableFormat.remove(at: mutableFormat.startIndex)
-        
-        if let i = Int(String(c)) , 0...9 ~= i {
+
+        if let i = Int(String(c)), 0...9 ~= i {
             if n > 0 { n *= 10 }
             n += i
             continue
         }
-        
-        var o : Any = 0
-        
+
         if c == "s" {
-            o = objectsQueue.remove(at: 0)
-            
-            guard let stringData = (o as! String).data(using: .utf8) else { assertionFailure(); return Data() }
+            guard !objectsQueue.isEmpty else {
+                throw BinUtilsError.invalidArgument(reason: "missing argument for format 's'")
+            }
+            let o = objectsQueue.remove(at: 0)
+            guard let stringValue = o as? String else {
+                throw BinUtilsError.invalidArgument(reason: "expected String, got \(type(of: o))")
+            }
+            guard let stringData = stringValue.data(using: .utf8) else {
+                throw BinUtilsError.invalidArgument(reason: "cannot encode string as UTF-8")
+            }
             var bytes = stringData.bytes
-            
             let expectedSize = max(1, n)
-            
-            // pad ...
             while bytes.count < expectedSize { bytes.append(0x00) }
-            
-            // ... or trunk
             if bytes.count > expectedSize { bytes = Array(bytes[0..<expectedSize]) }
-            
-            assert(bytes.count == expectedSize)
-            
             if isBigEndian { bytes = bytes.reversed() }
-            
             mutableData.append(bytes, count: bytes.count)
-            
             n = 0
             continue
         }
-        
-        for _ in 0..<max(n,1) {
-            
-            var bytes : [UInt8] = []
-            
+
+        for _ in 0..<max(n, 1) {
+            var bytes: [UInt8] = []
+            var o: Any = 0
             if c != "x" {
+                guard !objectsQueue.isEmpty else {
+                    throw BinUtilsError.invalidArgument(reason: "missing argument for format '\(c)'")
+                }
                 o = objectsQueue.removeFirst()
             }
-            
-            switch(c) {
+
+            switch c {
             case "?":
-                bytes = (o as! Bool) ? [0x01] : [0x00]
+                guard let b = o as? Bool else {
+                    throw BinUtilsError.invalidArgument(reason: "expected Bool, got \(type(of: o))")
+                }
+                bytes = b ? [0x01] : [0x00]
             case "c":
-                let charAsString = (o as! NSString).substring(to: 1)
+                guard let s = (o as? String) ?? (o as? NSString) as String? else {
+                    throw BinUtilsError.invalidArgument(reason: "expected String for 'c', got \(type(of: o))")
+                }
+                let charAsString = String(s.prefix(1))
                 guard let data = charAsString.data(using: stringEncoding) else {
-                    assertionFailure("cannot decode character \(charAsString) using encoding \(stringEncoding)")
-                    return Data()
+                    throw BinUtilsError.invalidArgument(reason: "cannot encode '\(charAsString)' using \(stringEncoding)")
                 }
                 bytes = data.bytes
             case "b":
-                bytes = Int8(truncatingIfNeeded:o as! Int).data.bytes
+                bytes = Int8(truncatingIfNeeded: try castInt(o)).data.bytes
             case "h":
-                bytes = Int16(truncatingIfNeeded:o as! Int).data.bytes
+                bytes = Int16(truncatingIfNeeded: try castInt(o)).data.bytes
             case "i", "l":
-                bytes = Int32(truncatingIfNeeded:o as! Int).data.bytes
-            case "q", "Q":
-                bytes = Int64(o as! Int).data.bytes
+                bytes = Int32(truncatingIfNeeded: try castInt(o)).data.bytes
+            case "q":
+                bytes = Int64(try castInt(o)).data.bytes
+            case "Q":
+                bytes = UInt64(try castInt(o)).data.bytes
             case "B":
-                bytes = UInt8(truncatingIfNeeded:o as! Int).data.bytes
+                bytes = UInt8(truncatingIfNeeded: try castInt(o)).data.bytes
             case "H":
-                bytes = UInt16(truncatingIfNeeded:o as! Int).data.bytes
+                bytes = UInt16(truncatingIfNeeded: try castInt(o)).data.bytes
             case "I", "L":
-                bytes = UInt32(truncatingIfNeeded:o as! Int).data.bytes
+                bytes = UInt32(truncatingIfNeeded: try castInt(o)).data.bytes
             case "f":
-                bytes = Float32(o as! Double).data.bytes
+                bytes = Float32(try castDouble(o)).data.bytes
             case "d":
-                bytes = Float64(o as! Double).data.bytes
+                bytes = Float64(try castDouble(o)).data.bytes
             case "x":
                 bytes = [0x00]
             default:
-                assertionFailure("Unsupported packing format: \(c)")
+                throw BinUtilsError.unsupportedFormat(character: c)
             }
-            
+
             if isBigEndian { bytes = bytes.reversed() }
-            let data = Data(bytes)
-            mutableData.append(data)
+            mutableData.append(Data(bytes))
         }
-        
+
         n = 0
     }
-    
+
     return mutableData
 }
 
@@ -338,7 +389,7 @@ public func unpack(_ format:String, _ data:Data, _ stringEncoding:String.Encodin
     
     assert(CFByteOrderGetCurrent() == 1 /* CFByteOrderLittleEndian */, "\(#file) assumes little endian, but host is big endian")
     
-    let isBigEndian = isBigEndianFromMandatoryByteOrderFirstCharacter(format)
+    let isBigEndian = try isBigEndianFromMandatoryByteOrderFirstCharacter(format)
     
     if formatDoesMatchDataLength(format, data: data) == false {
         throw BinUtilsError.formatDoesMatchDataLength(format:format, dataSize:data.count)
@@ -368,11 +419,16 @@ public func unpack(_ format:String, _ data:Data, _ stringEncoding:String.Encodin
         
         if c == "s" {
             let length = max(n,1)
+            
+            // Bounds checking to prevent crash
+            guard loc + length <= bytes.count else {
+                throw BinUtilsError.dataOutOfBounds(expected: loc + length, actual: bytes.count)
+            }
+            
             let sub = Array(bytes[loc..<loc+length])
             
             guard let s = NSString(bytes: sub, length: length, encoding: stringEncoding.rawValue) else {
-                assertionFailure("-- not a string: \(sub)")
-                return []
+                throw BinUtilsError.invalidArgument(reason: "could not decode string")
             }
             
             a.append(s)
@@ -391,48 +447,59 @@ public func unpack(_ format:String, _ data:Data, _ stringEncoding:String.Encodin
             switch(c) {
                 
             case "c":
+                // Bounds checking for single character
+                guard loc < bytes.count else {
+                    throw BinUtilsError.dataOutOfBounds(expected: loc + 1, actual: bytes.count)
+                }
+                
                 let optionalString = NSString(bytes: [bytes[loc]], length: 1, encoding: String.Encoding.utf8.rawValue)
                 loc += 1
-                guard let s = optionalString else { assertionFailure(); return [] }
+                guard let s = optionalString else {
+                    throw BinUtilsError.invalidArgument(reason: "could not decode 'c' character")
+                }
                 o = s
             case "b":
-                let r = readIntegerType(Int8.self, bytes:bytes, loc:&loc)
+                let r = try readIntegerType(Int8.self, bytes:bytes, loc:&loc)
                 o = Int(r)
             case "B":
-                let r = readIntegerType(UInt8.self, bytes:bytes, loc:&loc)
+                let r = try readIntegerType(UInt8.self, bytes:bytes, loc:&loc)
                 o = Int(r)
             case "?":
-                let r = readIntegerType(Bool.self, bytes:bytes, loc:&loc)
+                let r = try readIntegerType(Bool.self, bytes:bytes, loc:&loc)
                 o = r ? true : false
             case "h":
-                let r = readIntegerType(Int16.self, bytes:bytes, loc:&loc)
+                let r = try readIntegerType(Int16.self, bytes:bytes, loc:&loc)
                 o = Int(isBigEndian ? Int16(bigEndian: r) : r)
             case "H":
-                let r = readIntegerType(UInt16.self, bytes:bytes, loc:&loc)
+                let r = try readIntegerType(UInt16.self, bytes:bytes, loc:&loc)
                 o = Int(isBigEndian ? UInt16(bigEndian: r) : r)
             case "i":
                 fallthrough
             case "l":
-                let r = readIntegerType(Int32.self, bytes:bytes, loc:&loc)
+                let r = try readIntegerType(Int32.self, bytes:bytes, loc:&loc)
                 o = Int(isBigEndian ? Int32(bigEndian: r) : r)
             case "I":
                 fallthrough
             case "L":
-                let r = readIntegerType(UInt32.self, bytes:bytes, loc:&loc)
+                let r = try readIntegerType(UInt32.self, bytes:bytes, loc:&loc)
                 o = Int(isBigEndian ? UInt32(bigEndian: r) : r)
             case "q":
-                let r = readIntegerType(Int64.self, bytes:bytes, loc:&loc)
+                let r = try readIntegerType(Int64.self, bytes:bytes, loc:&loc)
                 o = Int(isBigEndian ? Int64(bigEndian: r) : r)
             case "Q":
-                let r = readIntegerType(UInt64.self, bytes:bytes, loc:&loc)
+                let r = try readIntegerType(UInt64.self, bytes:bytes, loc:&loc)
                 o = Int(isBigEndian ? UInt64(bigEndian: r) : r)
             case "f":
-                let r = readFloatingPointType(Float32.self, bytes:bytes, loc:&loc, isBigEndian:isBigEndian)
+                let r = try readFloatingPointType(Float32.self, bytes:bytes, loc:&loc, isBigEndian:isBigEndian)
                 o = Double(r)
             case "d":
-                let r = readFloatingPointType(Float64.self, bytes:bytes, loc:&loc, isBigEndian:isBigEndian)
+                let r = try readFloatingPointType(Float64.self, bytes:bytes, loc:&loc, isBigEndian:isBigEndian)
                 o = Double(r)
             case "x":
+                // Bounds checking for padding byte
+                guard loc < bytes.count else {
+                    throw BinUtilsError.dataOutOfBounds(expected: loc + 1, actual: bytes.count)
+                }
                 loc += 1
             case " ":
                 ()

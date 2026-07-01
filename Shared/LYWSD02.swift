@@ -35,11 +35,11 @@ struct LYWSD02UUID {
         }
     }
     
-    // Precomputed constants for performance
-    static let serviceCBUUIDs: [CBUUID] = [
-        Service.Unknown1.cbuuid,
-        Service.Unknown2.cbuuid
-    ]
+    // CBUUID is not Sendable, so we expose this as a computed property
+    // (cheap — just two CBUUID allocations) instead of a stored static let.
+    static var serviceCBUUIDs: [CBUUID] {
+        [Service.Unknown1.cbuuid, Service.Unknown2.cbuuid]
+    }
 }
 
 extension String {

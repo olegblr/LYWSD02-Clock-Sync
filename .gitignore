@@ -1,2 +1,28 @@
+# Xcode
+build/
+DerivedData/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Packages/
+Package.resolved
+
+# macOS
 .DS_Store
-LYWSD02 Clock Sync.xcodeproj/project.xcworkspace/xcuserdata/Aleh_Chachotka.xcuserdatad/UserInterfaceState.xcuserstate
+
+# Built apps / artifacts
+*.app
+*.dSYM.zip
+*.dSYM
+
+# Editor backups
+*.backup
+*.swp
+*~
+
+# Pixelmator
+*.pxd/
